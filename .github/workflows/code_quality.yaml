@@ -3,33 +3,17 @@ name: Code Quality Check
 on: [push, pull_request]
 
 jobs:
-  clang-format-check:
+  check_lint:
     runs-on: ubuntu-latest
-
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v2
-
-      - name: Install clang-format
-        run: sudo apt-get install -y clang-format
-
-      - name: Check formatting
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v4
+        with:
+          python-version: 3.8
+      - name: Install dependencies
         run: |
-          # Check if .clang-format exists
-          if [ ! -f .clang-format ]; then
-            echo "Error: .clang-format file not found in the repository root."
-            exit 1
-          fi
-
-          # Run clang-format in dry-run mode and capture output
-          FORMATTING_ISSUES=$(find . -name '*.cpp' -o -name '*.h' | xargs clang-format --style=file --dry-run --Werror)
-
-          # Check if there are formatting issues
-          if [ -n "$FORMATTING_ISSUES" ]; then
-            echo "Code formatting issues found:"
-            echo "$FORMATTING_ISSUES"
-            echo "Please run clang-format to fix the issues."
-            exit 1
-          else
-            echo "All files are properly formatted."
-          fi
+          python -m pip install --upgrade pip
+          pip install pre-commit clang-format
+      - name: Run lint
+        run: |
+          pre-commit run --all-files
