@@ -2,7 +2,7 @@
 
 using namespace std;
 
-int main(){
-    cout << "Hello From TransISA!" << endl;
-    return 0;
+int main() {
+  cout << "Hello From TransISA!" << endl;
+  return 0;
 }

@@ -8,7 +8,7 @@ target_include_directories(llvm_ir_lib PUBLIC ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(llvm_ir_lib PRIVATE ir_lib)
 
 # setting llvm dir
-set(LLVM_DIR "/usr/local/lib/cmake/llvm") 
+set(LLVM_DIR "/usr/local/lib/cmake/llvm")
 
 # Find LLVM
 find_package(LLVM REQUIRED CONFIG)
@@ -21,7 +21,4 @@ add_definitions(${LLVM_DEFINITIONS})
 llvm_map_components_to_libnames(LLVM_LIBS support core irreader mc scalaropts)
 
 # Link LLVM libraries
-target_link_libraries(llvm_ir_lib
-    PRIVATE
-    ${LLVM_LIBS}
-)
+target_link_libraries(llvm_ir_lib PRIVATE ${LLVM_LIBS})

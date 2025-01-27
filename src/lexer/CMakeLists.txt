@@ -1,4 +1,3 @@
-
 # library for lexer
 add_library(lexer_lib Lexer.cpp)
 
