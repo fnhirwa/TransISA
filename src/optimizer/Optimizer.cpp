@@ -1,69 +1,74 @@
-// #include "Optimizer.h"
-// #include "llvm/Support/TargetSelect.h"
-// #include "llvm/Support/FileSystem.h"
-// #include "llvm/Support/TargetRegistry.h"
-// #include "llvm/Support/raw_ostream.h"
-// #include "llvm/Target/TargetOptions.h"
-// #include "llvm/IR/LegacyPassManager.h"
+#include "optimizer/Optimizer.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Support/FileSystem.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Target/TargetOptions.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/MC/TargetRegistry.h"
+#include "llvm/Transforms/InstCombine/InstCombine.h"
+#include "llvm/Transforms/Utils.h"
+#include "llvm/Transforms/Scalar.h"
+#include "llvm/TargetParser/Host.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Support/CodeGen.h"
 
-// Optimizer::Optimizer() {
-//     // Initialize LLVM targets
-//     llvm::InitializeAllTargetInfos();
-//     llvm::InitializeAllTargets();
-//     llvm::InitializeAllTargetMCs();
-//     llvm::InitializeAllAsmParsers();
-//     llvm::InitializeAllAsmPrinters();
-// }
 
-// void Optimizer::optimize(llvm::Module& module) {
-//     // Create a pass manager
-//     llvm::legacy::PassManager passManager;
+Optimizer::Optimizer() {
+    // Initialize LLVM targets
+    llvm::InitializeAllTargetInfos();
+    llvm::InitializeAllTargets();
+    llvm::InitializeAllTargetMCs();
+    llvm::InitializeAllAsmParsers();
+    llvm::InitializeAllAsmPrinters();
+}
 
-//     // Add optimization passes
-//     passManager.add(llvm::createPromoteMemoryToRegisterPass()); // Example pass
-//     passManager.add(llvm::createInstructionCombiningPass());    // Example pass
-//     passManager.add(llvm::createDeadCodeEliminationPass());     // Example pass
+void Optimizer::optimize(llvm::Module& module) {
+    // Create a pass manager
+    llvm::legacy::PassManager passManager;
 
-//     // Run the passes
-//     passManager.run(module);
-// }
+    // Add optimization passes
+    passManager.add(llvm::createPromoteMemoryToRegisterPass()); // Example pass
+    passManager.add(llvm::createInstructionCombiningPass());    // Example pass
+    passManager.add(llvm::createDeadCodeEliminationPass());     // Example pass
 
-// void Optimizer::generateAssembly(llvm::Module& module, const std::string& outputFilename) {
-//     // Open the output file
-//     std::error_code errorCode;
-//     llvm::raw_fd_ostream outputStream(outputFilename, errorCode, llvm::sys::fs::OF_None);
-//     if (errorCode) {
-//         llvm::errs() << "Error opening output file: " << errorCode.message() << "\n";
-//         return;
-//     }
+    // Run the passes
+    passManager.run(module);
+}
 
-//     // Get the target machine (e.g., x86)
-//     std::string targetTriple = llvm::sys::getDefaultTargetTriple();
-//     std::string error;
-//     const llvm::Target* target = llvm::TargetRegistry::lookupTarget(targetTriple, error);
-//     if (!target) {
-//         llvm::errs() << "Error finding target: " << error << "\n";
-//         return;
-//     }
+void Optimizer::generateAssembly(llvm::Module& module, const std::string& outputFilename) {
+    // Open the output file
+    std::error_code errorCode;
+    llvm::raw_fd_ostream outputStream(outputFilename, errorCode, llvm::sys::fs::OF_None);
+    if (errorCode) {
+        llvm::errs() << "Error opening output file: " << errorCode.message() << "\n";
+        return;
+    }
 
-//     // Configure the target machine
-//     llvm::TargetOptions targetOptions;
-//     llvm::TargetMachine* targetMachine = target->createTargetMachine(
-//         targetTriple, "generic", "", targetOptions, llvm::Reloc::Model::PIC_);
+    // Get the target machine (e.g., x86)
+    std::string targetTriple = llvm::sys::getDefaultTargetTriple();
+    std::string error;
+    const llvm::Target* target = llvm::TargetRegistry::lookupTarget(targetTriple, error);
+    if (!target) {
+        llvm::errs() << "Error finding target: " << error << "\n";
+        return;
+    }
 
-//     // Set the module's target triple
-//     module.setTargetTriple(targetTriple);
+    // Configure the target machine
+    llvm::TargetOptions targetOptions;
+    llvm::TargetMachine* targetMachine = target->createTargetMachine(
+        targetTriple, "generic", "", targetOptions, llvm::Reloc::Model::PIC_);
 
-//     // Generate assembly code
-//     llvm::legacy::PassManager passManager;
-//     if (targetMachine->addPassesToEmitFile(passManager, outputStream, nullptr, llvm::CGFT_AssemblyFile)) {
-//         llvm::errs() << "Error generating assembly code\n";
-//         return;
-//     }
+    // Set the module's target triple
+    module.setTargetTriple(targetTriple);
 
-//     // Run the passes
-//     passManager.run(module);
+    // Generate assembly code
+    llvm::legacy::PassManager passManager;
+    targetMachine->addPassesToEmitFile(passManager, outputStream, nullptr, llvm::CodeGenFileType::AssemblyFile);
 
-//     // Clean up
-//     outputStream.flush();
-// }
+
+    // Run the passes
+    passManager.run(module);
+
+    // Clean up
+    outputStream.flush();
+}
