@@ -32,4 +32,6 @@ class Lexer {
   Token readLabel();
 };
 
+std::string tokenValueToLower(std::string_view str);
+
 #endif // LEXER_H

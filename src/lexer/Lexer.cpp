@@ -1,6 +1,7 @@
 #include "lexer/Lexer.h"
 #include <cctype>
 #include <iostream>
+#include "lexer/Token.h"
 
 std::vector<std::string> punctuations =
     {",", ":", "(", ")", "[", "]", "+", "-", "*", "/", "=", "%", "$"};
@@ -107,6 +108,12 @@ void Lexer::reportError(const std::string& message) {
   exit(EXIT_FAILURE); // Stop execution on lexing error
 }
 
+std::string tokenValueToLower(std::string_view str) {
+  std::string result(str);
+  std::transform(result.begin(), result.end(), result.begin(), ::tolower);
+  return result;
+}
+
 char Lexer::peek() {
   return position < source.size() ? source[position] : '\0';
 }
@@ -146,14 +153,15 @@ Token Lexer::readInstruction() {
   }
 
   // Check if it's a known instruction
-  TokenType type = keywordTrie->find(value);
+  std::string lower = tokenValueToLower(value);
+  TokenType type = keywordTrie->find(lower);
 
   if (type == TokenType::INSTRUCTION) {
-    return {type, value, line, column};
+    return {type, lower, "INSTRUCTION", line, column};
   } else {
-    reportError("Unknown instruction: " + value);
+    reportError("Unknown instruction: " + lower);
   }
-  return {TokenType::END_OF_FILE, "", line, column};
+  return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
 }
 
 Token Lexer::readKeyword() {
@@ -161,8 +169,10 @@ Token Lexer::readKeyword() {
   while (isalnum(peek())) {
     keyword += advance();
   }
-  TokenType type = keywordTrie->find(keyword);
-  return Token{type, keyword, line, column};
+  std::string lower = tokenValueToLower(keyword);
+  TokenType type = keywordTrie->find(lower);
+  std::string type_name = getTokenTypeName(type);
+  return Token{type, lower, type_name, line, column};
 }
 
 Token Lexer::readRegister() {
@@ -171,13 +181,13 @@ Token Lexer::readRegister() {
   while (position < source.size() && isalnum(source[position])) {
     value += advance();
   }
-
-  if (keywordTrie->find(value) == TokenType::REGISTER) {
-    return {TokenType::REGISTER, value, line, column};
+  std::string lower = tokenValueToLower(value);
+  if (keywordTrie->find(lower) == TokenType::REGISTER) {
+    return {TokenType::REGISTER, lower, "REGISTER", line, column};
   } else {
-    reportError("Unknown register: " + value);
+    reportError("Unknown register: " + lower);
   }
-  return {TokenType::END_OF_FILE, "", line, column};
+  return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
 }
 
 Token Lexer::readImmediate() {
@@ -220,12 +230,13 @@ Token Lexer::readImmediate() {
       value += advance();
   }
 
-  return Token{TokenType::IMMEDIATE, value, line, startColumn};
+  return Token{TokenType::IMMEDIATE, value, "IMMEDIATE", line, startColumn};
 }
 
 Token Lexer::readPunctuation() {
   char c = advance();
-  return {TokenType::PUNCTUATION, std::string(1, c), line, column};
+  return {
+      TokenType::PUNCTUATION, std::string(1, c), "PUNCTUATION", line, column};
 }
 
 Token Lexer::readLabel() {
@@ -237,11 +248,11 @@ Token Lexer::readLabel() {
 
   if (peek() == ':') {
     advance(); // Consume ':'
-    return {TokenType::LABEL, value, line, column};
+    return {TokenType::LABEL, value, "LABEL", line, column};
   } else {
     reportError("Invalid label format.");
   }
-  return {TokenType::END_OF_FILE, "", line, column};
+  return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
 }
 
 std::vector<Token> Lexer::tokenize() {
@@ -272,6 +283,7 @@ std::vector<Token> Lexer::tokenize() {
     }
   }
 
-  tokens.push_back({TokenType::END_OF_FILE, "", line, column});
+  tokens.push_back(
+      {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column});
   return tokens;
 }

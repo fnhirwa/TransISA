@@ -4,14 +4,13 @@
 using namespace std;
 
 int main() {
-  std::string input = "mov eax, 5";
+  std::string input = "mov eax, 5\n ADd ebx, 10\n";
   Lexer lexer(input);
   std::vector<Token> tokens = lexer.tokenize();
 
   for (const Token& token : tokens) {
-    std::cout << "Token: " << token.value
-              << " Type: " << static_cast<int>(token.type) << "\n";
+    std::cout << "Token: " << token.value << " Type: " << token.type_name
+              << "\n";
   }
-
   return 0;
 }
