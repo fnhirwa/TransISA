@@ -8,6 +8,7 @@ enum class TokenType {
   REGISTER,
   IMMEDIATE,
   PUNCTUATION,
+  LABEL,
   END_OF_FILE
 };
 

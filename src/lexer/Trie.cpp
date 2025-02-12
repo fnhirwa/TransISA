@@ -1,0 +1,27 @@
+#include "lexer/Trie.h"
+
+Trie::Trie() {
+  root = std::make_unique<TrieNode>();
+}
+
+void Trie::insert(const std::string& keyword, TokenType type) {
+  TrieNode* node = root.get();
+  for (char c : keyword) {
+    if (!node->children[c]) {
+      node->children[c] = std::make_unique<TrieNode>();
+    }
+    node = node->children[c].get();
+  }
+  node->isEnd = true;
+  node->type = type;
+}
+
+TokenType Trie::find(const std::string& keyword) const {
+  TrieNode* node = root.get();
+  for (char c : keyword) {
+    if (!node->children.count(c))
+      return TokenType::INSTRUCTION;
+    node = node->children.at(c).get();
+  }
+  return node->isEnd ? node->type : TokenType::INSTRUCTION;
+}
