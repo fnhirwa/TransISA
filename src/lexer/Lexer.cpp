@@ -153,6 +153,7 @@ Token Lexer::readInstruction() {
   } else {
     reportError("Unknown instruction: " + value);
   }
+  return {TokenType::END_OF_FILE, "", line, column};
 }
 
 Token Lexer::readKeyword() {
@@ -176,6 +177,7 @@ Token Lexer::readRegister() {
   } else {
     reportError("Unknown register: " + value);
   }
+  return {TokenType::END_OF_FILE, "", line, column};
 }
 
 Token Lexer::readImmediate() {
@@ -239,6 +241,7 @@ Token Lexer::readLabel() {
   } else {
     reportError("Invalid label format.");
   }
+  return {TokenType::END_OF_FILE, "", line, column};
 }
 
 std::vector<Token> Lexer::tokenize() {
