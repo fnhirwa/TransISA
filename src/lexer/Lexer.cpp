@@ -108,6 +108,12 @@ void Lexer::reportError(const std::string& message) {
   exit(EXIT_FAILURE); // Stop execution on lexing error
 }
 
+std::string tokenValueToLower(std::string_view str) {
+  std::string result(str);
+  std::transform(result.begin(), result.end(), result.begin(), ::tolower);
+  return result;
+}
+
 char Lexer::peek() {
   return position < source.size() ? source[position] : '\0';
 }
@@ -147,12 +153,13 @@ Token Lexer::readInstruction() {
   }
 
   // Check if it's a known instruction
-  TokenType type = keywordTrie->find(value);
+  std::string lower = tokenValueToLower(value);
+  TokenType type = keywordTrie->find(lower);
 
   if (type == TokenType::INSTRUCTION) {
-    return {type, value, "INSTRUCTION", line, column};
+    return {type, lower, "INSTRUCTION", line, column};
   } else {
-    reportError("Unknown instruction: " + value);
+    reportError("Unknown instruction: " + lower);
   }
   return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
 }
@@ -162,9 +169,10 @@ Token Lexer::readKeyword() {
   while (isalnum(peek())) {
     keyword += advance();
   }
-  TokenType type = keywordTrie->find(keyword);
+  std::string lower = tokenValueToLower(keyword);
+  TokenType type = keywordTrie->find(lower);
   std::string type_name = getTokenTypeName(type);
-  return Token{type, keyword, type_name, line, column};
+  return Token{type, lower, type_name, line, column};
 }
 
 Token Lexer::readRegister() {
@@ -173,11 +181,11 @@ Token Lexer::readRegister() {
   while (position < source.size() && isalnum(source[position])) {
     value += advance();
   }
-
-  if (keywordTrie->find(value) == TokenType::REGISTER) {
-    return {TokenType::REGISTER, value, "REGISTER", line, column};
+  std::string lower = tokenValueToLower(value);
+  if (keywordTrie->find(lower) == TokenType::REGISTER) {
+    return {TokenType::REGISTER, lower, "REGISTER", line, column};
   } else {
-    reportError("Unknown register: " + value);
+    reportError("Unknown register: " + lower);
   }
   return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
 }

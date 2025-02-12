@@ -4,7 +4,7 @@
 using namespace std;
 
 int main() {
-  std::string input = "mov eax, 5\n add ebx, 10\n";
+  std::string input = "mov eax, 5\n ADd ebx, 10\n";
   Lexer lexer(input);
   std::vector<Token> tokens = lexer.tokenize();
 
