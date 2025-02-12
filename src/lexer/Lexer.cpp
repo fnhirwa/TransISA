@@ -1,6 +1,7 @@
 #include "lexer/Lexer.h"
 #include <cctype>
 #include <iostream>
+#include "lexer/Token.h"
 
 std::vector<std::string> punctuations =
     {",", ":", "(", ")", "[", "]", "+", "-", "*", "/", "=", "%", "$"};
@@ -149,11 +150,11 @@ Token Lexer::readInstruction() {
   TokenType type = keywordTrie->find(value);
 
   if (type == TokenType::INSTRUCTION) {
-    return {type, value, line, column};
+    return {type, value, "INSTRUCTION", line, column};
   } else {
     reportError("Unknown instruction: " + value);
   }
-  return {TokenType::END_OF_FILE, "", line, column};
+  return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
 }
 
 Token Lexer::readKeyword() {
@@ -162,7 +163,8 @@ Token Lexer::readKeyword() {
     keyword += advance();
   }
   TokenType type = keywordTrie->find(keyword);
-  return Token{type, keyword, line, column};
+  std::string type_name = getTokenTypeName(type);
+  return Token{type, keyword, type_name, line, column};
 }
 
 Token Lexer::readRegister() {
@@ -173,11 +175,11 @@ Token Lexer::readRegister() {
   }
 
   if (keywordTrie->find(value) == TokenType::REGISTER) {
-    return {TokenType::REGISTER, value, line, column};
+    return {TokenType::REGISTER, value, "REGISTER", line, column};
   } else {
     reportError("Unknown register: " + value);
   }
-  return {TokenType::END_OF_FILE, "", line, column};
+  return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
 }
 
 Token Lexer::readImmediate() {
@@ -220,12 +222,13 @@ Token Lexer::readImmediate() {
       value += advance();
   }
 
-  return Token{TokenType::IMMEDIATE, value, line, startColumn};
+  return Token{TokenType::IMMEDIATE, value, "IMMEDIATE", line, startColumn};
 }
 
 Token Lexer::readPunctuation() {
   char c = advance();
-  return {TokenType::PUNCTUATION, std::string(1, c), line, column};
+  return {
+      TokenType::PUNCTUATION, std::string(1, c), "PUNCTUATION", line, column};
 }
 
 Token Lexer::readLabel() {
@@ -237,11 +240,11 @@ Token Lexer::readLabel() {
 
   if (peek() == ':') {
     advance(); // Consume ':'
-    return {TokenType::LABEL, value, line, column};
+    return {TokenType::LABEL, value, "LABEL", line, column};
   } else {
     reportError("Invalid label format.");
   }
-  return {TokenType::END_OF_FILE, "", line, column};
+  return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
 }
 
 std::vector<Token> Lexer::tokenize() {
@@ -272,6 +275,7 @@ std::vector<Token> Lexer::tokenize() {
     }
   }
 
-  tokens.push_back({TokenType::END_OF_FILE, "", line, column});
+  tokens.push_back(
+      {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column});
   return tokens;
 }

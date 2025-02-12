@@ -15,8 +15,11 @@ enum class TokenType {
 struct Token {
   TokenType type;
   std::string value;
+  std::string type_name;
   size_t line;
   size_t column;
 };
+
+std::string getTokenTypeName(TokenType tok);
 
 #endif // TOKEN_H
