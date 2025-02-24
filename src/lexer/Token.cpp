@@ -16,8 +16,8 @@ std::string getTokenTypeName(TokenType tok) {
       return "INVALID";
     case TokenType::DIRECTIVE:
       return "DIRECTIVE";
-    case TokenType::END_OF_FILE:
-      return "END_OF_FILE";
+    case TokenType::END:
+      return "END";
   }
-  return "UNKNOWN";
+  return "UNKONWN";
 }

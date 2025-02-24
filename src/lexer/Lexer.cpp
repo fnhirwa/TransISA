@@ -192,7 +192,7 @@ Token Lexer::readInstruction() {
   } else {
     reportError("Unknown instruction: " + lower);
   }
-  return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
+  return {TokenType::INVALID, lower, "INVALID", line, column};
 }
 
 // Read a keyword from the input string
@@ -220,7 +220,7 @@ Token Lexer::readRegister() {
   } else {
     reportError("Unknown register: " + lower);
   }
-  return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
+  return {TokenType::INVALID, lower, "INVALID", line, column};
 }
 
 // Read an immediate value from the input string
@@ -321,8 +321,6 @@ std::vector<Token> Lexer::tokenize() {
       tokens.push_back(readPunctuation());
     }
   }
-
-  tokens.push_back(
-      {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column});
+  tokens.push_back({TokenType::END, "END", "END", line, column});
   return tokens;
 }

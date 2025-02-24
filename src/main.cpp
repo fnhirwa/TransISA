@@ -52,7 +52,7 @@ std::string example_test_str =
 
 int main() {
   std::string input = "mov eax, 5\n ADd ebx, 10\n end";
-  Lexer lexer(example_test_str);
+  Lexer lexer(input);
   std::vector<Token> tokens = lexer.tokenize();
 
   for (const Token& token : tokens) {
