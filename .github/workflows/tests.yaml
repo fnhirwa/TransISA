@@ -19,7 +19,10 @@ jobs:
           sudo apt-get install -y cmake libgtest-dev ninja-build
 
       - name: Install LLVM
-        run: sudo apt-get install -y llvm-19 llvm-dev clang libclang1 libclang-dev
+        run: |
+          wget https://apt.llvm.org/llvm.sh
+          chmod +x llvm.sh
+          sudo ./llvm.sh 19
     
       - name: Verify LLVM Version
         run: llvm-config --version
