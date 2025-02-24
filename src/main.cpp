@@ -51,13 +51,13 @@ std::string example_test_str =
     "4:\n";
 
 int main() {
-  std::string input = ".section	.rodata\nmov eax, 5\n ADd ebx, 10\n end";
   Lexer lexer(example_test_str);
-  std::vector<Token> tokens = lexer.tokenize();
 
+  std::vector<Token> tokens = lexer.tokenize();
+  // {TokenType::LABEL, value, "LABEL", line, column};
   for (const Token& token : tokens) {
-    std::cout << "Token: " << token.value << " Type: " << token.type_name
-              << "\n";
+    std::cout << token.value << " " << token.type_name << " " << token.line
+              << " " << token.column << std::endl;
   }
   return 0;
 }

@@ -1,0 +1,24 @@
+name: Code Quality Check
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  run-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libgtest-dev ninja-build
+      - name: Build and run tests
+        run: |
+          cmake -B build -S . -G Ninja
+          cmake --build build
+          ./build/tests/test_lexer

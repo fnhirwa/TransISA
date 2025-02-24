@@ -8,10 +8,11 @@ FetchContent_Declare(
 FetchContent_MakeAvailable(googletest)
 
 # adding tests examples
-add_executable(tests tests_main.cpp)
+add_executable(test_lexer test_lexer.cpp)
 
 # link all libraries to the test executable
-target_link_libraries(tests PRIVATE optimizer_lib gtest_main)
+target_link_libraries(test_lexer PRIVATE optimizer_lib gtest_main)
 enable_testing()
-# add the tests to the test suite
-add_test(NAME TransISA_TESTS COMMAND tests)
+
+# Add the test
+add_test(NAME LexerTest COMMAND test_lexer)
