@@ -200,22 +200,37 @@ Token Lexer::readInstruction() {
   return {TokenType::INVALID, lower, "INVALID", line, column};
 }
 
-// Read a keyword from the input string
+bool isImmediate(std::string_view value) {
+  for (size_t i = 0; i < value.size(); i++) {
+    if (!isdigit(value[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Read any other keyword from the input string
 Token Lexer::readKeyword() {
   std::string keyword;
-  while (isalnum(peek())) {
+  while (isalnum(peek()) || peek() == '_') {
     keyword += advance();
   }
-  std::string lower = tokenValueToLower(keyword);
-  TokenType type = keywordTrie->find(lower);
-  std::string type_name = getTokenTypeName(type);
-  return Token{type, lower, type_name, line, column};
+  std::string keyword_lower = tokenValueToLower(keyword);
+  TokenType type = keywordTrie->find(keyword_lower);
+  if (type != TokenType::INVALID) {
+    std::string name = getTokenTypeName(type);
+    return {type, keyword_lower, name, line, column};
+  }
+  if (isImmediate(keyword_lower)) {
+    return Token{
+        TokenType::IMMEDIATE, keyword_lower, "IMMEDIATE", line, column};
+  }
+  return Token{TokenType::VALUE, keyword, "VALUE", line, column};
 }
 
 // Read a register from the input string
 Token Lexer::readRegister() {
   std::string value;
-
   while (position < source.size() && isalnum(source[position])) {
     value += advance();
   }
@@ -279,18 +294,20 @@ Token Lexer::readPunctuation() {
       TokenType::PUNCTUATION, std::string(1, c), "PUNCTUATION", line, column};
 }
 
+// Read a label from the input string
 Token Lexer::readLabel() {
   std::string value;
-
+  if (peek() == '.') {
+    value += advance();
+  }
   while (position < source.size() && isalnum(source[position])) {
     value += advance();
   }
-
   if (peek() == ':') {
     advance(); // Consume ':'
     return {TokenType::LABEL, value, "LABEL", line, column};
-  } else {
-    reportError("Invalid label format.");
+  } else if (peek() == ' ') {
+    skipWhitespace();
   }
   return {TokenType::INVALID, value, "INVALID", line, column};
 }
@@ -300,7 +317,7 @@ Token Lexer::readDirective() {
   // the directive is started with a '.'
   // so we need to add it to the value
   value += advance();
-  while (isalnum(peek())) {
+  while (isalnum(peek()) || peek() == '_') {
     value += advance();
   }
   std::string lower = tokenValueToLower(value);
@@ -311,6 +328,21 @@ Token Lexer::readDirective() {
     reportError("Unknown directive: " + lower);
   }
   return {TokenType::INVALID, lower, "INVALID", line, column};
+}
+
+// Read a string for some cases we have strings in the code
+Token Lexer::readString() {
+  std::string value;
+  // the string is started with a '"'
+  // so we need to add it to the value
+  value += advance();
+  while (peek() != '"') {
+    value += advance();
+  }
+  // the string is ended with a '"'
+  // so we need to add it to the value
+  value += advance();
+  return {TokenType::STRING, value, "STRING", line, column};
 }
 
 // Tokenize the input string
@@ -326,24 +358,32 @@ std::vector<Token> Lexer::tokenize() {
 
     char c = peek();
 
-    if (isalpha(c) || c == '.') {
+    if (isalnum(c) || c == '.') {
       // check if it is either a directive or label as some
       // labels start with a '.'
+      size_t nextWhitespace = source.find_first_of(" \t\n", position);
+      size_t nextColon = source.find(':', position);
       if (c == '.') {
-        if (source.find(':', position) != std::string::npos) {
+        size_t nextWhitespace = source.find_first_of(" \t\n", position);
+        size_t nextColon = source.find(':', position);
+        if (nextColon != std::string::npos && nextColon < nextWhitespace) {
           tokens.push_back(readLabel());
         } else {
           tokens.push_back(readDirective());
         }
-      } else if (source.find(':', position) != std::string::npos) {
+      } else if (nextColon != std::string::npos && nextColon < nextWhitespace) {
         tokens.push_back(readLabel());
       } else {
         tokens.push_back(readKeyword());
       }
+    } else if (c == '"') {
+      tokens.push_back(readString());
     } else if (
         isdigit(c) ||
         (c == '0' &&
-         (source[position + 1] == 'x' || source[position + 1] == 'X'))) {
+             (source[position + 1] == 'x' || source[position + 1] == 'X') ||
+         (c == '-' && isdigit(source[position + 1])) ||
+         (c == '-' && isdigit(source[position + 1])))) {
       tokens.push_back(readImmediate());
     } else {
       tokens.push_back(readPunctuation());

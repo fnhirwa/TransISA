@@ -13,8 +13,10 @@ enum class TokenType {
   PUNCTUATION,
   LABEL,
   INVALID,
-  END,
   DIRECTIVE,
+  STRING,
+  VALUE,
+  END,
 };
 
 struct Token {

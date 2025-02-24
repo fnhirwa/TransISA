@@ -22,8 +22,8 @@ TokenType Trie::find(const std::string& keyword) const {
   TrieNode* node = root.get();
   for (char c : keyword) {
     if (!node->children.count(c))
-      return TokenType::INSTRUCTION;
+      return TokenType::INVALID;
     node = node->children.at(c).get();
   }
-  return node->isEnd ? node->type : TokenType::INSTRUCTION;
+  return node->isEnd ? node->type : TokenType::INVALID;
 }
