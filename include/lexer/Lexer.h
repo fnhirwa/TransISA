@@ -6,9 +6,14 @@
 #include "lexer/Token.h"
 #include "lexer/Trie.h"
 
+// The Lexer class is used to tokenize an input string. The tokenize method
+// reads the input string character sequence and returns a vector of tokens. The
+// reportError method is used to report an error with the lexer.
+// The string_view is used to pass a reference to the input string without
+// copying it. Using it can improve performance when passing large strings.
 class Lexer {
  public:
-  explicit Lexer(const std::string& source);
+  explicit Lexer(const std::string_view& source);
   std::vector<Token> tokenize();
   void reportError(const std::string& message);
 
