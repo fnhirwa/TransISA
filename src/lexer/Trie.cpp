@@ -4,6 +4,7 @@ Trie::Trie() {
   root = std::make_unique<TrieNode>();
 }
 
+// Insert a keyword into the trie
 void Trie::insert(const std::string& keyword, TokenType type) {
   TrieNode* node = root.get();
   for (char c : keyword) {
@@ -16,6 +17,7 @@ void Trie::insert(const std::string& keyword, TokenType type) {
   node->type = type;
 }
 
+// Find the token type for a given keyword
 TokenType Trie::find(const std::string& keyword) const {
   TrieNode* node = root.get();
   for (char c : keyword) {

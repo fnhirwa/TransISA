@@ -5,8 +5,10 @@
 
 std::vector<std::string> punctuations =
     {",", ":", "(", ")", "[", "]", "+", "-", "*", "/", "=", "%", "$"};
-
-Lexer::Lexer(const std::string& source) : source(source) {
+// The mapping of basic instructions and registers to their corresponding token
+// types This will also store the directives and other keywords like .file,
+// .section, etc.
+Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie = std::make_unique<Trie>();
   keywordTrie->insert("mov", TokenType::INSTRUCTION);
   keywordTrie->insert("add", TokenType::INSTRUCTION);
@@ -122,8 +124,10 @@ Lexer::Lexer(const std::string& source) : source(source) {
   keywordTrie->insert(".note.gnu.property", TokenType::DIRECTIVE);
   keywordTrie->insert(".long", TokenType::DIRECTIVE);
   keywordTrie->insert(".string", TokenType::DIRECTIVE);
+  // Directives
 }
 
+// Report an error within the lexer
 void Lexer::reportError(const std::string& message) {
   std::cerr << "Lexer Error [Line " << line << ", Column " << column
             << "]: " << message << std::endl;
@@ -136,10 +140,12 @@ std::string tokenValueToLower(std::string_view str) {
   return result;
 }
 
+// Return the next character in the input string
 char Lexer::peek() {
   return position < source.size() ? source[position] : '\0';
 }
 
+// Advance the position in the input string and return the character
 char Lexer::advance() {
   if (position < source.size()) {
     char c = source[position++];
@@ -149,6 +155,7 @@ char Lexer::advance() {
   return '\0';
 }
 
+// Skip whitespace characters in the input string
 void Lexer::skipWhitespace() {
   while (isspace(peek())) {
     if (peek() == '\n') {
@@ -159,6 +166,7 @@ void Lexer::skipWhitespace() {
   }
 }
 
+// Skip comments in the input string
 void Lexer::skipComment() {
   if (peek() == ';') {
     while (peek() != '\n' && peek() != '\0') {
@@ -167,6 +175,7 @@ void Lexer::skipComment() {
   }
 }
 
+// Read an instruction from the input string
 Token Lexer::readInstruction() {
   std::string value;
 
@@ -186,6 +195,7 @@ Token Lexer::readInstruction() {
   return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
 }
 
+// Read a keyword from the input string
 Token Lexer::readKeyword() {
   std::string keyword;
   while (isalnum(peek())) {
@@ -197,6 +207,7 @@ Token Lexer::readKeyword() {
   return Token{type, lower, type_name, line, column};
 }
 
+// Read a register from the input string
 Token Lexer::readRegister() {
   std::string value;
 
@@ -212,6 +223,7 @@ Token Lexer::readRegister() {
   return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
 }
 
+// Read an immediate value from the input string
 Token Lexer::readImmediate() {
   size_t start = position;
   size_t startColumn = column;
@@ -255,6 +267,7 @@ Token Lexer::readImmediate() {
   return Token{TokenType::IMMEDIATE, value, "IMMEDIATE", line, startColumn};
 }
 
+// Read a punctuation character from the input string
 Token Lexer::readPunctuation() {
   char c = advance();
   return {
@@ -280,6 +293,7 @@ Token Lexer::readLabel() {
   return Token{TokenType::INVALID, value, "INVALID", line, startColumn};
 }
 
+// Tokenize the input string
 std::vector<Token> Lexer::tokenize() {
   std::vector<Token> tokens;
 
