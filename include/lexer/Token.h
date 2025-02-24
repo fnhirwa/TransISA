@@ -9,6 +9,8 @@ enum class TokenType {
   IMMEDIATE,
   PUNCTUATION,
   LABEL,
+  INVALID,
+  DIRECTIVE,
   END_OF_FILE
 };
 

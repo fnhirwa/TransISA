@@ -100,6 +100,28 @@ Lexer::Lexer(const std::string& source) : source(source) {
   for (const std::string& punctuation : punctuations) {
     keywordTrie->insert(punctuation, TokenType::PUNCTUATION);
   }
+
+  // Directives
+  keywordTrie->insert(".file", TokenType::DIRECTIVE);
+  keywordTrie->insert(".section", TokenType::DIRECTIVE);
+  keywordTrie->insert(".string", TokenType::DIRECTIVE);
+  keywordTrie->insert(".type", TokenType::DIRECTIVE);
+  keywordTrie->insert(".globl", TokenType::DIRECTIVE);
+  keywordTrie->insert(".cfi_startproc", TokenType::DIRECTIVE);
+  keywordTrie->insert(".cfi_def_cfa_offset", TokenType::DIRECTIVE);
+  keywordTrie->insert(".cfi_offset", TokenType::DIRECTIVE);
+  keywordTrie->insert(".cfi_def_cfa_register", TokenType::DIRECTIVE);
+  keywordTrie->insert(".cfi_def_cfa", TokenType::DIRECTIVE);
+  keywordTrie->insert(".cfi_endproc", TokenType::DIRECTIVE);
+  keywordTrie->insert(".size", TokenType::DIRECTIVE);
+  keywordTrie->insert(".ident", TokenType::DIRECTIVE);
+  keywordTrie->insert(".align", TokenType::DIRECTIVE);
+  keywordTrie->insert(".long", TokenType::DIRECTIVE);
+  keywordTrie->insert(".note", TokenType::DIRECTIVE);
+  keywordTrie->insert(".GNU-stack", TokenType::DIRECTIVE);
+  keywordTrie->insert(".note.gnu.property", TokenType::DIRECTIVE);
+  keywordTrie->insert(".long", TokenType::DIRECTIVE);
+  keywordTrie->insert(".string", TokenType::DIRECTIVE);
 }
 
 void Lexer::reportError(const std::string& message) {
@@ -241,18 +263,21 @@ Token Lexer::readPunctuation() {
 
 Token Lexer::readLabel() {
   std::string value;
+  size_t startColumn = column;
 
-  while (position < source.size() && isalnum(source[position])) {
-    value += advance();
+  // If it starts with '.', it's not a label but a directive
+  if (!value.empty() && value[0] == '.') {
+    return Token{TokenType::DIRECTIVE, value, "DIRECTIVE", line, startColumn};
   }
 
+  // Ensure a label must end with ':'
   if (peek() == ':') {
     advance(); // Consume ':'
-    return {TokenType::LABEL, value, "LABEL", line, column};
-  } else {
-    reportError("Invalid label format.");
+    return Token{TokenType::LABEL, value, "LABEL", line, startColumn};
   }
-  return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
+
+  // Otherwise, it is an invalid label
+  return Token{TokenType::INVALID, value, "INVALID", line, startColumn};
 }
 
 std::vector<Token> Lexer::tokenize() {

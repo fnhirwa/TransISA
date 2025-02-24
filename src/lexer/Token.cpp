@@ -12,6 +12,10 @@ std::string getTokenTypeName(TokenType tok) {
       return "PUNCTUATION";
     case TokenType::LABEL:
       return "LABEL";
+    case TokenType::INVALID:
+      return "INVALID";
+    case TokenType::DIRECTIVE:
+      return "DIRECTIVE";
     case TokenType::END_OF_FILE:
       return "END_OF_FILE";
   }
