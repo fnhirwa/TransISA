@@ -28,6 +28,7 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert("call", TokenType::INSTRUCTION);
   keywordTrie->insert("ret", TokenType::INSTRUCTION);
   keywordTrie->insert("end", TokenType::INSTRUCTION);
+  keywordTrie->insert("lea", TokenType::INSTRUCTION);
   // General-purpose registers (32-bit)
   keywordTrie->insert("eax", TokenType::REGISTER);
   keywordTrie->insert("ebx", TokenType::REGISTER);
@@ -126,6 +127,7 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert(".long", TokenType::DIRECTIVE);
   keywordTrie->insert(".note", TokenType::DIRECTIVE);
   keywordTrie->insert(".GNU-stack", TokenType::DIRECTIVE);
+  keywordTrie->insert(".note.GNU-stack", TokenType::DIRECTIVE);
   keywordTrie->insert(".note.gnu.property", TokenType::DIRECTIVE);
   keywordTrie->insert(".long", TokenType::DIRECTIVE);
   keywordTrie->insert(".string", TokenType::DIRECTIVE);
@@ -308,6 +310,23 @@ Token Lexer::readLabel() {
     return {TokenType::LABEL, value, "LABEL", line, column};
   } else if (peek() == ' ') {
     skipWhitespace();
+  } else if (peek() == '[') {
+    std::string addressing_mode;
+    addressing_mode += advance(); // Consume '['
+    while (peek() != ']' && peek() != '\0') {
+      addressing_mode += advance();
+    }
+    if (peek() == ']') {
+      addressing_mode += advance(); // Consume ']'
+    } else {
+      reportError("Unterminated addressing mode in label: " + value);
+    }
+    return {
+        TokenType::INSTRUCTION,
+        value + addressing_mode,
+        "INSTRUCTION",
+        line,
+        column};
   }
   return {TokenType::INVALID, value, "INVALID", line, column};
 }
@@ -317,13 +336,17 @@ Token Lexer::readDirective() {
   // the directive is started with a '.'
   // so we need to add it to the value
   value += advance();
-  while (isalnum(peek()) || peek() == '_') {
+  while (isalnum(peek()) || peek() == '_' || peek() == '-' || peek() == '.') {
     value += advance();
   }
   std::string lower = tokenValueToLower(value);
   TokenType type = keywordTrie->find(lower);
   if (type == TokenType::DIRECTIVE) {
     return {type, lower, "DIRECTIVE", line, column};
+  }
+  // handle values like .-main
+  if (lower.find('.') != std::string::npos) {
+    return {TokenType::VALUE, lower, "VALUE", line, column};
   } else {
     reportError("Unknown directive: " + lower);
   }
@@ -366,13 +389,18 @@ std::vector<Token> Lexer::tokenize() {
       if (c == '.') {
         size_t nextWhitespace = source.find_first_of(" \t\n", position);
         size_t nextColon = source.find(':', position);
+        size_t nextBracket = source.find('[', position);
         if (nextColon != std::string::npos && nextColon < nextWhitespace) {
+          tokens.push_back(readLabel());
+        } else if (
+            nextBracket != std::string::npos && nextBracket < nextWhitespace) {
           tokens.push_back(readLabel());
         } else {
           tokens.push_back(readDirective());
         }
       } else if (nextColon != std::string::npos && nextColon < nextWhitespace) {
         tokens.push_back(readLabel());
+        // tokens.push_back(readAddressingMode());
       } else {
         tokens.push_back(readKeyword());
       }
