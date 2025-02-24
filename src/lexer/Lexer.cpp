@@ -105,12 +105,17 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
 
   // Directives
   keywordTrie->insert(".file", TokenType::DIRECTIVE);
+  keywordTrie->insert(".text", TokenType::DIRECTIVE);
+  keywordTrie->insert(".intel_syntax", TokenType::DIRECTIVE);
   keywordTrie->insert(".section", TokenType::DIRECTIVE);
   keywordTrie->insert(".string", TokenType::DIRECTIVE);
   keywordTrie->insert(".type", TokenType::DIRECTIVE);
   keywordTrie->insert(".globl", TokenType::DIRECTIVE);
+  keywordTrie->insert(".rodata", TokenType::DIRECTIVE);
+  keywordTrie->insert(".type", TokenType::DIRECTIVE);
   keywordTrie->insert(".cfi_startproc", TokenType::DIRECTIVE);
   keywordTrie->insert(".cfi_def_cfa_offset", TokenType::DIRECTIVE);
+  keywordTrie->insert(".cfi_endproc", TokenType::DIRECTIVE);
   keywordTrie->insert(".cfi_offset", TokenType::DIRECTIVE);
   keywordTrie->insert(".cfi_def_cfa_register", TokenType::DIRECTIVE);
   keywordTrie->insert(".cfi_def_cfa", TokenType::DIRECTIVE);
@@ -276,21 +281,36 @@ Token Lexer::readPunctuation() {
 
 Token Lexer::readLabel() {
   std::string value;
-  size_t startColumn = column;
 
-  // If it starts with '.', it's not a label but a directive
-  if (!value.empty() && value[0] == '.') {
-    return Token{TokenType::DIRECTIVE, value, "DIRECTIVE", line, startColumn};
+  while (position < source.size() && isalnum(source[position])) {
+    value += advance();
   }
 
-  // Ensure a label must end with ':'
   if (peek() == ':') {
     advance(); // Consume ':'
-    return Token{TokenType::LABEL, value, "LABEL", line, startColumn};
+    return {TokenType::LABEL, value, "LABEL", line, column};
+  } else {
+    reportError("Invalid label format.");
   }
+  return {TokenType::INVALID, value, "INVALID", line, column};
+}
 
-  // Otherwise, it is an invalid label
-  return Token{TokenType::INVALID, value, "INVALID", line, startColumn};
+Token Lexer::readDirective() {
+  std::string value;
+  // the directive is started with a '.'
+  // so we need to add it to the value
+  value += advance();
+  while (isalnum(peek())) {
+    value += advance();
+  }
+  std::string lower = tokenValueToLower(value);
+  TokenType type = keywordTrie->find(lower);
+  if (type == TokenType::DIRECTIVE) {
+    return {type, lower, "DIRECTIVE", line, column};
+  } else {
+    reportError("Unknown directive: " + lower);
+  }
+  return {TokenType::INVALID, lower, "INVALID", line, column};
 }
 
 // Tokenize the input string
@@ -306,8 +326,16 @@ std::vector<Token> Lexer::tokenize() {
 
     char c = peek();
 
-    if (isalpha(c)) {
-      if (source.find(':', position) != std::string::npos) {
+    if (isalpha(c) || c == '.') {
+      // check if it is either a directive or label as some
+      // labels start with a '.'
+      if (c == '.') {
+        if (source.find(':', position) != std::string::npos) {
+          tokens.push_back(readLabel());
+        } else {
+          tokens.push_back(readDirective());
+        }
+      } else if (source.find(':', position) != std::string::npos) {
         tokens.push_back(readLabel());
       } else {
         tokens.push_back(readKeyword());

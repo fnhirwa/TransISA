@@ -35,6 +35,7 @@ class Lexer {
   Token readImmediate();
   Token readPunctuation();
   Token readLabel();
+  Token readDirective();
 };
 
 std::string tokenValueToLower(std::string_view str);
