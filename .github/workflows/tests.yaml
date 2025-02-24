@@ -17,6 +17,16 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake libgtest-dev ninja-build
+      - name: build llvm a core dependency
+        run: |
+          git clone --depth 1 --branch llvmorg-19.1.0
+            cmake -S llvm-project/llvm -B llvm-project/build \
+                            -DCMAKE_BUILD_TYPE=Release \
+                            -DLLVM_ENABLE_PROJECTS=all \
+                            -DLLVM_ENABLE_RUNTIMES=all
+            cmake --build llvm-project/build -j8
+            cmake --install llvm-project/build --prefix /usr/local
+
       - name: Build and run tests
         run: |
           cmake -B build -S . -G Ninja
