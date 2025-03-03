@@ -1,19 +1,41 @@
 #include "lexer/Token.h"
 
 std::string getTokenTypeName(TokenType tok) {
+  std::string type_name;
   switch (tok) {
     case TokenType::INSTRUCTION:
-      return "INSTRUCTION";
+      type_name = "INSTRUCTION";
+      break;
     case TokenType::REGISTER:
-      return "REGISTER";
+      type_name = "REGISTER";
+      break;
     case TokenType::IMMEDIATE:
-      return "IMMEDIATE";
+      type_name = "IMMEDIATE";
+      break;
     case TokenType::PUNCTUATION:
-      return "PUNCTUATION";
+      type_name = "PUNCTUATION";
+      break;
     case TokenType::LABEL:
-      return "LABEL";
-    case TokenType::END_OF_FILE:
-      return "END_OF_FILE";
+      type_name = "LABEL";
+      break;
+    case TokenType::INVALID:
+      type_name = "INVALID";
+      break;
+    case TokenType::DIRECTIVE:
+      type_name = "DIRECTIVE";
+      break;
+    case TokenType::STRING:
+      type_name = "STRING";
+      break;
+    case TokenType::VALUE:
+      type_name = "VALUE";
+      break;
+    case TokenType::END:
+      type_name = "END";
+      break;
+    default:
+      type_name = "UNKNOWN";
+      break;
   }
-  return "UNKNOWN";
+  return type_name;
 }

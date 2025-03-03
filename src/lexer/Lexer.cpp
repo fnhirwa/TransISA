@@ -1,4 +1,5 @@
 #include "lexer/Lexer.h"
+#include <algorithm>
 #include <cctype>
 #include <iostream>
 #include "lexer/Token.h"
@@ -28,6 +29,7 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert("call", TokenType::INSTRUCTION);
   keywordTrie->insert("ret", TokenType::INSTRUCTION);
   keywordTrie->insert("end", TokenType::INSTRUCTION);
+  keywordTrie->insert("lea", TokenType::INSTRUCTION);
   // General-purpose registers (32-bit)
   keywordTrie->insert("eax", TokenType::REGISTER);
   keywordTrie->insert("ebx", TokenType::REGISTER);
@@ -102,6 +104,34 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   for (const std::string& punctuation : punctuations) {
     keywordTrie->insert(punctuation, TokenType::PUNCTUATION);
   }
+
+  // Directives
+  keywordTrie->insert(".file", TokenType::DIRECTIVE);
+  keywordTrie->insert(".text", TokenType::DIRECTIVE);
+  keywordTrie->insert(".intel_syntax", TokenType::DIRECTIVE);
+  keywordTrie->insert(".section", TokenType::DIRECTIVE);
+  keywordTrie->insert(".string", TokenType::DIRECTIVE);
+  keywordTrie->insert(".type", TokenType::DIRECTIVE);
+  keywordTrie->insert(".globl", TokenType::DIRECTIVE);
+  keywordTrie->insert(".rodata", TokenType::DIRECTIVE);
+  keywordTrie->insert(".type", TokenType::DIRECTIVE);
+  keywordTrie->insert(".cfi_startproc", TokenType::DIRECTIVE);
+  keywordTrie->insert(".cfi_def_cfa_offset", TokenType::DIRECTIVE);
+  keywordTrie->insert(".cfi_endproc", TokenType::DIRECTIVE);
+  keywordTrie->insert(".cfi_offset", TokenType::DIRECTIVE);
+  keywordTrie->insert(".cfi_def_cfa_register", TokenType::DIRECTIVE);
+  keywordTrie->insert(".cfi_def_cfa", TokenType::DIRECTIVE);
+  keywordTrie->insert(".cfi_endproc", TokenType::DIRECTIVE);
+  keywordTrie->insert(".size", TokenType::DIRECTIVE);
+  keywordTrie->insert(".ident", TokenType::DIRECTIVE);
+  keywordTrie->insert(".align", TokenType::DIRECTIVE);
+  keywordTrie->insert(".long", TokenType::DIRECTIVE);
+  keywordTrie->insert(".note", TokenType::DIRECTIVE);
+  keywordTrie->insert(".GNU-stack", TokenType::DIRECTIVE);
+  keywordTrie->insert(".note.GNU-stack", TokenType::DIRECTIVE);
+  keywordTrie->insert(".note.gnu.property", TokenType::DIRECTIVE);
+  keywordTrie->insert(".long", TokenType::DIRECTIVE);
+  keywordTrie->insert(".string", TokenType::DIRECTIVE);
   // Directives
 }
 
@@ -170,25 +200,40 @@ Token Lexer::readInstruction() {
   } else {
     reportError("Unknown instruction: " + lower);
   }
-  return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
+  return {TokenType::INVALID, lower, "INVALID", line, column};
 }
 
-// Read a keyword from the input string
+bool isImmediate(std::string_view value) {
+  for (size_t i = 0; i < value.size(); i++) {
+    if (!isdigit(value[i])) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Read any other keyword from the input string
 Token Lexer::readKeyword() {
   std::string keyword;
-  while (isalnum(peek())) {
+  while (isalnum(peek()) || peek() == '_') {
     keyword += advance();
   }
-  std::string lower = tokenValueToLower(keyword);
-  TokenType type = keywordTrie->find(lower);
-  std::string type_name = getTokenTypeName(type);
-  return Token{type, lower, type_name, line, column};
+  std::string keyword_lower = tokenValueToLower(keyword);
+  TokenType type = keywordTrie->find(keyword_lower);
+  if (type != TokenType::INVALID) {
+    std::string name = getTokenTypeName(type);
+    return {type, keyword_lower, name, line, column};
+  }
+  if (isImmediate(keyword_lower)) {
+    return Token{
+        TokenType::IMMEDIATE, keyword_lower, "IMMEDIATE", line, column};
+  }
+  return Token{TokenType::VALUE, keyword, "VALUE", line, column};
 }
 
 // Read a register from the input string
 Token Lexer::readRegister() {
   std::string value;
-
   while (position < source.size() && isalnum(source[position])) {
     value += advance();
   }
@@ -198,7 +243,7 @@ Token Lexer::readRegister() {
   } else {
     reportError("Unknown register: " + lower);
   }
-  return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
+  return {TokenType::INVALID, lower, "INVALID", line, column};
 }
 
 // Read an immediate value from the input string
@@ -252,20 +297,76 @@ Token Lexer::readPunctuation() {
       TokenType::PUNCTUATION, std::string(1, c), "PUNCTUATION", line, column};
 }
 
+// Read a label from the input string
 Token Lexer::readLabel() {
   std::string value;
-
+  if (peek() == '.') {
+    value += advance();
+  }
   while (position < source.size() && isalnum(source[position])) {
     value += advance();
   }
-
   if (peek() == ':') {
     advance(); // Consume ':'
     return {TokenType::LABEL, value, "LABEL", line, column};
-  } else {
-    reportError("Invalid label format.");
+  } else if (peek() == ' ') {
+    skipWhitespace();
+  } else if (peek() == '[') {
+    std::string addressing_mode;
+    addressing_mode += advance(); // Consume '['
+    while (peek() != ']' && peek() != '\0') {
+      addressing_mode += advance();
+    }
+    if (peek() == ']') {
+      addressing_mode += advance(); // Consume ']'
+    } else {
+      reportError("Unterminated addressing mode in label: " + value);
+    }
+    return {
+        TokenType::INSTRUCTION,
+        value + addressing_mode,
+        "INSTRUCTION",
+        line,
+        column};
   }
-  return {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column};
+  return {TokenType::INVALID, value, "INVALID", line, column};
+}
+
+Token Lexer::readDirective() {
+  std::string value;
+  // the directive is started with a '.'
+  // so we need to add it to the value
+  value += advance();
+  while (isalnum(peek()) || peek() == '_' || peek() == '-' || peek() == '.') {
+    value += advance();
+  }
+  std::string lower = tokenValueToLower(value);
+  TokenType type = keywordTrie->find(lower);
+  if (type == TokenType::DIRECTIVE) {
+    return {type, lower, "DIRECTIVE", line, column};
+  }
+  // handle values like .-main
+  if (lower.find('.') != std::string::npos) {
+    return {TokenType::VALUE, lower, "VALUE", line, column};
+  } else {
+    reportError("Unknown directive: " + lower);
+  }
+  return {TokenType::INVALID, lower, "INVALID", line, column};
+}
+
+// Read a string for some cases we have strings in the code
+Token Lexer::readString() {
+  std::string value;
+  // the string is started with a '"'
+  // so we need to add it to the value
+  value += advance();
+  while (peek() != '"') {
+    value += advance();
+  }
+  // the string is ended with a '"'
+  // so we need to add it to the value
+  value += advance();
+  return {TokenType::STRING, value, "STRING", line, column};
 }
 
 // Tokenize the input string
@@ -281,23 +382,42 @@ std::vector<Token> Lexer::tokenize() {
 
     char c = peek();
 
-    if (isalpha(c)) {
-      if (source.find(':', position) != std::string::npos) {
+    if (isalnum(c) || c == '.') {
+      // check if it is either a directive or label as some
+      // labels start with a '.'
+      size_t nextWhitespace = source.find_first_of(" \t\n", position);
+      size_t nextColon = source.find(':', position);
+      if (c == '.') {
+        size_t nextWhitespace = source.find_first_of(" \t\n", position);
+        size_t nextColon = source.find(':', position);
+        size_t nextBracket = source.find('[', position);
+        if (nextColon != std::string::npos && nextColon < nextWhitespace) {
+          tokens.push_back(readLabel());
+        } else if (
+            nextBracket != std::string::npos && nextBracket < nextWhitespace) {
+          tokens.push_back(readLabel());
+        } else {
+          tokens.push_back(readDirective());
+        }
+      } else if (nextColon != std::string::npos && nextColon < nextWhitespace) {
         tokens.push_back(readLabel());
+        // tokens.push_back(readAddressingMode());
       } else {
         tokens.push_back(readKeyword());
       }
+    } else if (c == '"') {
+      tokens.push_back(readString());
     } else if (
         isdigit(c) ||
         (c == '0' &&
-         (source[position + 1] == 'x' || source[position + 1] == 'X'))) {
+             (source[position + 1] == 'x' || source[position + 1] == 'X') ||
+         (c == '-' && isdigit(source[position + 1])) ||
+         (c == '-' && isdigit(source[position + 1])))) {
       tokens.push_back(readImmediate());
     } else {
       tokens.push_back(readPunctuation());
     }
   }
-
-  tokens.push_back(
-      {TokenType::END_OF_FILE, "EOF", "END_OF_FILE", line, column});
+  tokens.push_back({TokenType::END, "END", "END", line, column});
   return tokens;
 }
