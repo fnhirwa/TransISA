@@ -421,3 +421,28 @@ std::vector<Token> Lexer::tokenize() {
   tokens.push_back({TokenType::END, "END", "END", line, column});
   return tokens;
 }
+
+// Read the source file and return the content as a string
+std::string readFileToString(const std::string& filePath) {
+  std::ifstream file(filePath, std::ios::binary);
+  if (!file.is_open()) {
+    throw std::runtime_error("Failed to open file: " + filePath);
+  }
+  std::stringstream buffer;
+  buffer << file.rdbuf();
+  return buffer.str();
+}
+
+// Read the source string and return it as a string_view
+std::string_view readFileToStringView(
+    const std::string& filePath,
+    std::string& bufferStorage) {
+  std::ifstream file(filePath, std::ios::binary);
+  if (!file.is_open()) {
+    throw std::runtime_error("Failed to open file: " + filePath);
+  }
+  std::stringstream buffer;
+  buffer << file.rdbuf();
+  bufferStorage = buffer.str();
+  return bufferStorage;
+}
