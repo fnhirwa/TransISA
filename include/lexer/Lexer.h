@@ -1,6 +1,10 @@
 #ifndef LEXER_H
 #define LEXER_H
 
+#include <algorithm>
+#include <fstream>
+#include <iostream>
+#include <sstream>
 #include <string>
 #include <vector>
 #include "lexer/Token.h"
@@ -41,4 +45,9 @@ class Lexer {
 
 std::string tokenValueToLower(std::string_view str);
 
+std::string readFileToString(const std::string& filePath);
+std::string_view readFileToStringView(
+    const std::string& filePath,
+    std::string& bufferStorage);
+bool isValidFileExtension(const std::string& filePath);
 #endif // LEXER_H
