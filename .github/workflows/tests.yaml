@@ -47,8 +47,12 @@ jobs:
           echo "LLVM CXX Flags:"
           llvm-config --cxxflags
 
-      - name: Build and run tests
+      - name: Clean and Rebuild
         run: |
-          cmake -B build -S . -G Ninja -DLLVM_DIR=$LLVM_DIR
+          rm -rf build  # Delete old build artifacts
+          cmake -B build -S . -G Ninja -DCMAKE_OSX_ARCHITECTURES=arm64
           cmake --build build
-          ./build/tests/test_lexer
+  
+      - name: Run Tests
+        run: ./build/tests/test_lexer
+  

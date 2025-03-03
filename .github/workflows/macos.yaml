@@ -1,0 +1,39 @@
+name: Check Installed Versions on macOS
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  check-versions:
+    runs-on: macos-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v2
+
+      - name: Check macOS version
+        run: sw_vers
+
+      - name: Check installed compilers
+        run: |
+          echo "Checking LLVM and Clang versions..."
+          clang --version
+          clang++ --version
+          llvm-config --version || echo "llvm-config not found"
+
+      - name: Check Homebrew packages
+        run: |
+          echo "Checking installed Homebrew packages..."
+          brew list --versions llvm cmake ninja
+
+      - name: Check Python version
+        run: python3 --version
+
+      - name: Check CMake version
+        run: cmake --version
