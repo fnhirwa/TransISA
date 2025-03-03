@@ -67,15 +67,8 @@ void Optimizer::generateAssembly(
 
   // Generate assembly code
   llvm::legacy::PassManager passManager;
-#if defined(LLVM_CODEGEN_FILE_KIND) ||                      \
-    (LLVM_VERSION_MAJOR == 19 && LLVM_VERSION_MINOR == 1 && \
-     LLVM_VERSION_PATCH == 1)
-  targetMachine->addPassesToEmitFile(
-      passManager, outputStream, nullptr, llvm::CGFT_AssemblyFile);
-#else
   targetMachine->addPassesToEmitFile(
       passManager, outputStream, nullptr, llvm::CodeGenFileType::AssemblyFile);
-#endif
 
   // Run the passes
   passManager.run(module);
