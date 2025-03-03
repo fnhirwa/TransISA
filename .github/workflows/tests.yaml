@@ -16,16 +16,21 @@ jobs:
     runs-on: ${{ matrix.os }}
 
     steps:
-      - uses: actions/checkout@v2
+      - name: Checkout Repository
+        uses: actions/checkout@v4
 
       - name: Install dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install -y cmake libgtest-dev ninja-build llvm-19 llvm-19-dev clang-19 lld-19 lldb-19
+          
           echo "LLVM_DIR=/usr/lib/llvm-19/cmake" >> $GITHUB_ENV
           echo "CC=/usr/bin/clang-19" >> $GITHUB_ENV
           echo "CXX=/usr/bin/clang++-19" >> $GITHUB_ENV
+          echo "CMAKE_AR=/usr/bin/llvm-ar-19" >> $GITHUB_ENV
+          echo "CMAKE_RANLIB=/usr/bin/llvm-ranlib-19" >> $GITHUB_ENV
+          echo "LD_LIBRARY_PATH=/usr/lib/llvm-19/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
           echo "PATH=/usr/lib/llvm-19/bin:$PATH" >> $GITHUB_ENV
 
       - name: Install dependencies (macOS)
@@ -33,9 +38,13 @@ jobs:
         run: |
           brew update
           brew install cmake ninja llvm@19
+          
           echo "LLVM_DIR=$(brew --prefix llvm@19)/lib/cmake/llvm" >> $GITHUB_ENV
           echo "CC=$(brew --prefix llvm@19)/bin/clang" >> $GITHUB_ENV
           echo "CXX=$(brew --prefix llvm@19)/bin/clang++" >> $GITHUB_ENV
+          echo "CMAKE_AR=$(brew --prefix llvm@19)/bin/llvm-ar" >> $GITHUB_ENV
+          echo "CMAKE_RANLIB=$(brew --prefix llvm@19)/bin/llvm-ranlib" >> $GITHUB_ENV
+          echo "DYLD_LIBRARY_PATH=$(brew --prefix llvm@19)/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
           echo "PATH=$(brew --prefix llvm@19)/bin:$PATH" >> $GITHUB_ENV
 
       - name: Verify LLVM Installation
@@ -50,9 +59,21 @@ jobs:
       - name: Clean and Rebuild
         run: |
           rm -rf build  # Delete old build artifacts
-          cmake -B build -S . -G Ninja -DCMAKE_OSX_ARCHITECTURES=arm64
-          cmake --build build
-  
+          cmake -B build -S . -G Ninja \
+            -DCMAKE_C_COMPILER=$CC \
+            -DCMAKE_CXX_COMPILER=$CXX \
+            -DCMAKE_AR=$CMAKE_AR \
+            -DCMAKE_RANLIB=$CMAKE_RANLIB \
+            -DCMAKE_BUILD_TYPE=Release
+          cmake --build build --verbose
+
+      - name: Debug Static Library Issues (if build fails)
+        if: failure()
+        run: |
+          file build/src/ir/libir_lib.a || echo "libir_lib.a not found"
+          file build/src/parser/libparser_lib.a || echo "libparser_lib.a not found"
+          nm -g build/src/ir/libir_lib.a || echo "No symbols in libir_lib.a"
+          nm -g build/src/parser/libparser_lib.a || echo "No symbols in libparser_lib.a"
+
       - name: Run Tests
         run: ./build/tests/test_lexer
-  
