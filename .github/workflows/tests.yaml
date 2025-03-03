@@ -19,12 +19,13 @@ jobs:
           sudo apt-get install -y cmake libgtest-dev ninja-build
       - name: Install LLVM 19
         run: |
-          sudo apt-get install -y llvm-19 llvm-19-dev
+          sudo apt-get install -y llvm-19-dev clang-19 lld-19 lldb-19
   
       - name: Verify LLVM Installation
         run: |
           llvm-config-19 --version
           llvm-config-19 --cxxflags
+          grep -r "CodeGenFileKind" /usr/lib/llvm-19/include/llvm
   
       - name: Build and run tests
         run: |
