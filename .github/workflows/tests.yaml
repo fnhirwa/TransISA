@@ -25,7 +25,6 @@ jobs:
         run: |
           llvm-config-19 --version
           llvm-config-19 --cxxflags
-          grep -r "CodeGenFileKind" /usr/lib/llvm-19/include/llvm
   
       - name: Build and run tests
         run: |
