@@ -12,19 +12,38 @@
 class Parser {
  public:
   explicit Parser(const std::vector<Token>& tokens);
-  ASTNode* parse();
+  std::unique_ptr<ASTNode> parseExpression();
 
  private:
   std::vector<Token> tokens;
   size_t position = 0;
-
+  // for passing custom tokens from the lexer
   Token peek();
   Token advance();
   bool match(TokenType type);
-  ASTNode* parseInstruction();
-  ASTNode* parseRegister();
-  ASTNode* parseImmediate();
-  ASTNode* parseOperand();
+  std::unique_ptr<ASTNode> parseImmediate();
+  std::unique_ptr<ASTNode> parseRegister();
+  std::unique_ptr<ASTNode> parseLabel();
+  std::unique_ptr<ASTNode> parseDirective();
+  std::unique_ptr<ASTNode> parseString();
+  std::unique_ptr<ASTNode> parseKeyword();
+  std::unique_ptr<ASTNode> parseInstruction();
+
+  // for parsing expressions
+  std::unique_ptr<ASTNode> parsePrimaryExpr(); // for integer literals
+  std::unique_ptr<ASTNode> parseFunctionCall(
+      const std::string& callee); // for function calls
+  std::unique_ptr<ASTNode> parseBinaryOpRHS(
+      int exprPrecedence,
+      std::unique_ptr<ASTNode> LHS); // for binary operations
+
+  int getPrecedence(const std::string& op) {
+    if (op == "+" || op == "-")
+      return 10;
+    if (op == "*" || op == "/")
+      return 20;
+    return 0;
+  }
 };
 
 #endif // PARSER_H
