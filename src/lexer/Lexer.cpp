@@ -30,6 +30,8 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert("ret", TokenType::INSTRUCTION);
   keywordTrie->insert("end", TokenType::INSTRUCTION);
   keywordTrie->insert("lea", TokenType::INSTRUCTION);
+  keywordTrie->insert("syscall", TokenType::INSTRUCTION);
+
   // General-purpose registers (32-bit)
   keywordTrie->insert("eax", TokenType::REGISTER);
   keywordTrie->insert("ebx", TokenType::REGISTER);
@@ -106,10 +108,12 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   }
 
   // Directives
+  keywordTrie->insert(".data", TokenType::DIRECTIVE);
   keywordTrie->insert(".file", TokenType::DIRECTIVE);
   keywordTrie->insert(".text", TokenType::DIRECTIVE);
   keywordTrie->insert(".intel_syntax", TokenType::DIRECTIVE);
   keywordTrie->insert(".section", TokenType::DIRECTIVE);
+  keywordTrie->insert("section", TokenType::DIRECTIVE);
   keywordTrie->insert(".string", TokenType::DIRECTIVE);
   keywordTrie->insert(".type", TokenType::DIRECTIVE);
   keywordTrie->insert(".globl", TokenType::DIRECTIVE);
@@ -126,6 +130,14 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert(".ident", TokenType::DIRECTIVE);
   keywordTrie->insert(".align", TokenType::DIRECTIVE);
   keywordTrie->insert(".long", TokenType::DIRECTIVE);
+  keywordTrie->insert(".byte", TokenType::DIRECTIVE);
+  keywordTrie->insert(".short", TokenType::DIRECTIVE);
+  keywordTrie->insert("int", TokenType::DIRECTIVE);
+  keywordTrie->insert("db", TokenType::DIRECTIVE);
+  keywordTrie->insert(".quad", TokenType::DIRECTIVE);
+  keywordTrie->insert(".zero", TokenType::DIRECTIVE);
+  keywordTrie->insert(".bss", TokenType::DIRECTIVE);
+  keywordTrie->insert(".asciz", TokenType::DIRECTIVE);
   keywordTrie->insert(".note", TokenType::DIRECTIVE);
   keywordTrie->insert(".GNU-stack", TokenType::DIRECTIVE);
   keywordTrie->insert(".note.GNU-stack", TokenType::DIRECTIVE);
@@ -165,28 +177,28 @@ char Lexer::advance() {
 
 // Skip whitespace characters in the input string
 void Lexer::skipWhitespace() {
-  while (isspace(peek())) {
+  while (position < source.size() && isspace(peek())) {
     if (peek() == '\n') {
       line++;
-      column = 1;
+      column = 0;
     }
     advance();
   }
 }
 
-// Skip comments in the input string
+// Skip comments in the input string by moving to the next line
 void Lexer::skipComment() {
   if (peek() == ';') {
     while (peek() != '\n' && peek() != '\0') {
       advance();
     }
+    skipWhitespace();
   }
 }
 
 // Read an instruction from the input string
 Token Lexer::readInstruction() {
   std::string value;
-
   while (position < source.size() && isalnum(source[position])) {
     value += advance();
   }
@@ -215,6 +227,7 @@ bool isImmediate(std::string_view value) {
 // Read any other keyword from the input string
 Token Lexer::readKeyword() {
   std::string keyword;
+  // Read the keyword until a non-alphanumeric character is found
   while (isalnum(peek()) || peek() == '_') {
     keyword += advance();
   }
@@ -227,6 +240,10 @@ Token Lexer::readKeyword() {
   if (isImmediate(keyword_lower)) {
     return Token{
         TokenType::IMMEDIATE, keyword_lower, "IMMEDIATE", line, column};
+  }
+  if (keywordTrie->find(keyword_lower) == TokenType::DIRECTIVE) {
+    return Token{
+        TokenType::DIRECTIVE, keyword_lower, "DIRECTIVE", line, column};
   }
   return Token{TokenType::VALUE, keyword, "VALUE", line, column};
 }
@@ -300,7 +317,7 @@ Token Lexer::readPunctuation() {
 // Read a label from the input string
 Token Lexer::readLabel() {
   std::string value;
-  if (peek() == '.') {
+  if (peek() == '.' || peek() == '_') {
     value += advance();
   }
   while (position < source.size() && isalnum(source[position])) {
@@ -345,13 +362,8 @@ Token Lexer::readDirective() {
   if (type == TokenType::DIRECTIVE) {
     return {type, lower, "DIRECTIVE", line, column};
   }
-  // handle values like .-main
-  if (lower.find('.') != std::string::npos) {
-    return {TokenType::VALUE, lower, "VALUE", line, column};
-  } else {
-    reportError("Unknown directive: " + lower);
-  }
-  return {TokenType::INVALID, lower, "INVALID", line, column};
+  // handle values like .-main, _start
+  return {TokenType::VALUE, lower, "VALUE", line, column};
 }
 
 // Read a string for some cases we have strings in the code
@@ -359,8 +371,9 @@ Token Lexer::readString() {
   std::string value;
   // the string is started with a '"'
   // so we need to add it to the value
-  value += advance();
-  while (peek() != '"') {
+  char quote = advance();
+  value += quote;
+  while (peek() != quote && peek() != '\0') {
     value += advance();
   }
   // the string is ended with a '"'
@@ -374,22 +387,21 @@ std::vector<Token> Lexer::tokenize() {
   std::vector<Token> tokens;
 
   while (position < source.size()) {
-    skipWhitespace();
-    skipComment();
-
+    skipWhitespace(); // Then skip remaining spaces
+    while (peek() == ';') { // Ensure all comments are skipped
+      skipComment();
+      skipWhitespace(); // Also clear trailing spaces after a comment
+    }
     if (position >= source.size())
       break;
 
     char c = peek();
 
-    if (isalnum(c) || c == '.') {
-      // check if it is either a directive or label as some
-      // labels start with a '.'
+    if (isalnum(c) || c == '.' || c == '_') {
       size_t nextWhitespace = source.find_first_of(" \t\n", position);
       size_t nextColon = source.find(':', position);
-      if (c == '.') {
-        size_t nextWhitespace = source.find_first_of(" \t\n", position);
-        size_t nextColon = source.find(':', position);
+
+      if (c == '.' || "_") {
         size_t nextBracket = source.find('[', position);
         if (nextColon != std::string::npos && nextColon < nextWhitespace) {
           tokens.push_back(readLabel());
@@ -397,27 +409,36 @@ std::vector<Token> Lexer::tokenize() {
             nextBracket != std::string::npos && nextBracket < nextWhitespace) {
           tokens.push_back(readLabel());
         } else {
-          tokens.push_back(readDirective());
+          if (c == '.' || c == '_') {
+            tokens.push_back(readDirective());
+          } else {
+            tokens.push_back(readKeyword());
+          }
         }
       } else if (nextColon != std::string::npos && nextColon < nextWhitespace) {
         tokens.push_back(readLabel());
-        // tokens.push_back(readAddressingMode());
       } else {
         tokens.push_back(readKeyword());
       }
-    } else if (c == '"') {
+    } else if (c == '"' || c == '\'') {
       tokens.push_back(readString());
     } else if (
         isdigit(c) ||
-        (c == '0' &&
-             (source[position + 1] == 'x' || source[position + 1] == 'X') ||
-         (c == '-' && isdigit(source[position + 1])) ||
-         (c == '-' && isdigit(source[position + 1])))) {
+        (c == '0' && position + 1 < source.size() &&
+         (source[position + 1] == 'x' || source[position + 1] == 'X')) ||
+        (c == '-' && position + 1 < source.size() &&
+         isdigit(source[position + 1]))) {
       tokens.push_back(readImmediate());
-    } else {
+    } else if (
+        std::find(
+            punctuations.begin(), punctuations.end(), std::string(1, c)) !=
+        punctuations.end()) {
       tokens.push_back(readPunctuation());
+    } else {
+      reportError("Unexpected character: " + std::string(1, c));
     }
   }
+
   tokens.push_back({TokenType::END, "END", "END", line, column});
   return tokens;
 }
@@ -452,6 +473,8 @@ std::string_view readFileToStringView(
   bufferStorage = buffer.str();
   return bufferStorage;
 }
+
+// Check if the file extension is valid
 bool isValidFileExtension(const std::string& filePath) {
   size_t dotPos = filePath.find_last_of(".");
   if (dotPos == std::string::npos) {
