@@ -2,10 +2,11 @@
 #include <algorithm>
 #include <cctype>
 #include <iostream>
+#include <regex>
 #include "lexer/Token.h"
 
 std::vector<std::string> punctuations =
-    {",", ":", "(", ")", "[", "]", "+", "-", "*", "/", "=", "%", "$"};
+    {"(", ")", "+", "-", "*", "/", "=", "%", "$"};
 // The mapping of basic instructions and registers to their corresponding token
 // types This will also store the directives and other keywords like .file,
 // .section, etc.
@@ -31,6 +32,7 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert("end", TokenType::INSTRUCTION);
   keywordTrie->insert("lea", TokenType::INSTRUCTION);
   keywordTrie->insert("syscall", TokenType::INSTRUCTION);
+  keywordTrie->insert("int", TokenType::INSTRUCTION);
 
   // General-purpose registers (32-bit)
   keywordTrie->insert("eax", TokenType::REGISTER);
@@ -107,33 +109,24 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
     keywordTrie->insert(punctuation, TokenType::PUNCTUATION);
   }
 
-  // Directives
-  keywordTrie->insert(".data", TokenType::DIRECTIVE);
+  // Assembler Directives
   keywordTrie->insert(".file", TokenType::DIRECTIVE);
-  keywordTrie->insert(".text", TokenType::DIRECTIVE);
   keywordTrie->insert(".intel_syntax", TokenType::DIRECTIVE);
-  keywordTrie->insert(".section", TokenType::DIRECTIVE);
-  keywordTrie->insert("section", TokenType::DIRECTIVE);
-  keywordTrie->insert(".string", TokenType::DIRECTIVE);
   keywordTrie->insert(".type", TokenType::DIRECTIVE);
   keywordTrie->insert(".globl", TokenType::DIRECTIVE);
   keywordTrie->insert(".rodata", TokenType::DIRECTIVE);
-  keywordTrie->insert(".type", TokenType::DIRECTIVE);
   keywordTrie->insert(".cfi_startproc", TokenType::DIRECTIVE);
   keywordTrie->insert(".cfi_def_cfa_offset", TokenType::DIRECTIVE);
   keywordTrie->insert(".cfi_endproc", TokenType::DIRECTIVE);
   keywordTrie->insert(".cfi_offset", TokenType::DIRECTIVE);
   keywordTrie->insert(".cfi_def_cfa_register", TokenType::DIRECTIVE);
   keywordTrie->insert(".cfi_def_cfa", TokenType::DIRECTIVE);
-  keywordTrie->insert(".cfi_endproc", TokenType::DIRECTIVE);
   keywordTrie->insert(".size", TokenType::DIRECTIVE);
   keywordTrie->insert(".ident", TokenType::DIRECTIVE);
   keywordTrie->insert(".align", TokenType::DIRECTIVE);
   keywordTrie->insert(".long", TokenType::DIRECTIVE);
   keywordTrie->insert(".byte", TokenType::DIRECTIVE);
   keywordTrie->insert(".short", TokenType::DIRECTIVE);
-  keywordTrie->insert("int", TokenType::DIRECTIVE);
-  keywordTrie->insert("db", TokenType::DIRECTIVE);
   keywordTrie->insert(".quad", TokenType::DIRECTIVE);
   keywordTrie->insert(".zero", TokenType::DIRECTIVE);
   keywordTrie->insert(".bss", TokenType::DIRECTIVE);
@@ -142,9 +135,26 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert(".GNU-stack", TokenType::DIRECTIVE);
   keywordTrie->insert(".note.GNU-stack", TokenType::DIRECTIVE);
   keywordTrie->insert(".note.gnu.property", TokenType::DIRECTIVE);
-  keywordTrie->insert(".long", TokenType::DIRECTIVE);
   keywordTrie->insert(".string", TokenType::DIRECTIVE);
-  // Directives
+  keywordTrie->insert("global", TokenType::DIRECTIVE);
+
+  // Segment Directives
+  keywordTrie->insert(".text", TokenType::SEGMENT_DIRECTIVE);
+  keywordTrie->insert(".data", TokenType::SEGMENT_DIRECTIVE);
+  keywordTrie->insert(".bss", TokenType::SEGMENT_DIRECTIVE);
+  keywordTrie->insert(".section", TokenType::SEGMENT_DIRECTIVE);
+  keywordTrie->insert(".rodata", TokenType::SEGMENT_DIRECTIVE);
+  keywordTrie->insert("section", TokenType::SEGMENT_DIRECTIVE);
+  keywordTrie->insert(".string", TokenType::SEGMENT_DIRECTIVE);
+  // Data Value
+  keywordTrie->insert("db", TokenType::DATA_VALUE);
+  keywordTrie->insert("dw", TokenType::DATA_VALUE);
+  keywordTrie->insert("dd", TokenType::DATA_VALUE);
+  // Special Punctuations
+  keywordTrie->insert(",", TokenType::COMMA);
+  keywordTrie->insert(":", TokenType::COLON);
+  keywordTrie->insert("[", TokenType::L_BRACKET);
+  keywordTrie->insert("]", TokenType::R_BRACKET);
 }
 
 // Report an error within the lexer
@@ -196,6 +206,10 @@ void Lexer::skipComment() {
   }
 }
 
+//=============================================================//
+//                 Reading different tokens                   //
+//===========================================================//
+
 // Read an instruction from the input string
 Token Lexer::readInstruction() {
   std::string value;
@@ -215,39 +229,6 @@ Token Lexer::readInstruction() {
   return {TokenType::INVALID, lower, "INVALID", line, column};
 }
 
-bool isImmediate(std::string_view value) {
-  for (size_t i = 0; i < value.size(); i++) {
-    if (!isdigit(value[i])) {
-      return false;
-    }
-  }
-  return true;
-}
-
-// Read any other keyword from the input string
-Token Lexer::readKeyword() {
-  std::string keyword;
-  // Read the keyword until a non-alphanumeric character is found
-  while (isalnum(peek()) || peek() == '_') {
-    keyword += advance();
-  }
-  std::string keyword_lower = tokenValueToLower(keyword);
-  TokenType type = keywordTrie->find(keyword_lower);
-  if (type != TokenType::INVALID) {
-    std::string name = getTokenTypeName(type);
-    return {type, keyword_lower, name, line, column};
-  }
-  if (isImmediate(keyword_lower)) {
-    return Token{
-        TokenType::IMMEDIATE, keyword_lower, "IMMEDIATE", line, column};
-  }
-  if (keywordTrie->find(keyword_lower) == TokenType::DIRECTIVE) {
-    return Token{
-        TokenType::DIRECTIVE, keyword_lower, "DIRECTIVE", line, column};
-  }
-  return Token{TokenType::VALUE, keyword, "VALUE", line, column};
-}
-
 // Read a register from the input string
 Token Lexer::readRegister() {
   std::string value;
@@ -263,55 +244,102 @@ Token Lexer::readRegister() {
   return {TokenType::INVALID, lower, "INVALID", line, column};
 }
 
+// Detect the type of the number (decimal, hex, octal, binary)
+std::string detectNumberType(const std::string& value) {
+  static const std::regex decimalRegex(R"(^[+-]?[0-9]+$)");
+  static const std::regex hexRegex(R"(^0x[0-9A-Fa-f]+$|^[0-9A-Fa-f]+h$)");
+  static const std::regex octalRegex(R"(^0[0-7]+$)");
+  static const std::regex binaryRegex(R"(^0b[01]+$)");
+
+  if (std::regex_match(value, decimalRegex)) {
+    return "Decimal";
+  } else if (std::regex_match(value, hexRegex)) {
+    return "Hexadecimal";
+  } else if (std::regex_match(value, octalRegex)) {
+    return "Octal";
+  } else if (std::regex_match(value, binaryRegex)) {
+    return "Binary";
+  } else {
+    return "Unknown format";
+  }
+}
+
 // Read an immediate value from the input string
 Token Lexer::readImmediate() {
-  size_t start = position;
-  size_t startColumn = column;
   std::string value; // Store the immediate as a string
 
   // Handle optional '+' or '-' sign
   if (peek() == '+' || peek() == '-') {
     value += advance();
-  }
-
-  if (peek() == '0') {
-    // Check for hexadecimal, binary, or octal prefix
-    char next = source[position + 1];
-    if (next == 'x' || next == 'X') {
-      // Hexadecimal: 0x...
-      value += advance(); // '0'
-      value += advance(); // 'x'
-      while (isxdigit(peek()))
-        value += advance();
-    } else if (next == 'b' || next == 'B') {
-      // Binary: 0b...
-      value += advance(); // '0'
-      value += advance(); // 'b'
-      while (peek() == '0' || peek() == '1')
-        value += advance();
-    } else if (isdigit(next) && next >= '0' && next <= '7') {
-      // Octal: Starts with 0 and followed by 0-7
-      value += advance();
-      while (peek() >= '0' && peek() <= '7')
-        value += advance();
-    } else {
-      // Single '0'
+    while (isdigit(peek())) {
       value += advance();
     }
-  } else {
-    // Decimal number (starts with 1-9 or a sign)
-    while (isdigit(peek()))
+    return Token{TokenType::IMMEDIATE, value, "IMMEDIATE", line, column};
+  }
+  // hex has A, B, C, D, E, F
+  std::vector<char> hex_chars = {
+      'a', 'b', 'c', 'd', 'e', 'f', 'A', 'B', 'C', 'D', 'E', 'F'};
+  // Hexadecimal number (starts with 0x or 0X) or has 'h' at the end
+  if (peek() == '0' &&
+      (source[position + 1] == 'x' || source[position + 1] == 'X')) {
+    value += advance(); // Consume '0'
+    value += advance(); // Consume 'x'
+    while (isdigit(peek())) {
       value += advance();
+    }
+    while (std::find(hex_chars.begin(), hex_chars.end(), peek()) !=
+           hex_chars.end()) {
+      value += advance();
+    }
+    return Token{
+        TokenType::HEX_IMMEDIATE, value, "HEX_IMMEDIATE", line, column};
+  }
+  // binary values are represented as 0b1010
+  if (peek() == '0' &&
+      (source[position + 1] == 'b' || source[position + 1] == 'B')) {
+    value += advance(); // Consume '0'
+    value += advance(); // Consume 'b'
+    while (source[position] == '0' || source[position] == '1') {
+      value += advance();
+    }
+    return Token{
+        TokenType::BIN_IMMEDIATE, value, "BIN_IMMEDIATE", line, column};
+  }
+  // octal values are represented as 0o1234
+  if (peek() == '0' &&
+      (source[position + 1] == 'o' || source[position + 1] == 'O' ||
+       source[position + 1] == 'q')) {
+    value += advance(); // Consume '0'
+    value += advance(); // Consume 'o', 'O' or 'q'
+    while (source[position] >= '0' && source[position] <= '7') {
+      value += advance();
+    }
+    return Token{
+        TokenType::OCT_IMMEDIATE, value, "OCT_IMMEDIATE", line, column};
   }
 
-  return Token{TokenType::IMMEDIATE, value, "IMMEDIATE", line, startColumn};
-}
-
-// Read a punctuation character from the input string
-Token Lexer::readPunctuation() {
-  char c = advance();
-  return {
-      TokenType::PUNCTUATION, std::string(1, c), "PUNCTUATION", line, column};
+  // Decimal number (starts with 1-9 or a sign)
+  if (isdigit(peek())) {
+    while (isdigit(peek())) {
+      value += advance();
+    }
+    // check if the next character is a hex character
+    while (std::find(hex_chars.begin(), hex_chars.end(), peek()) !=
+           hex_chars.end()) {
+      value += advance();
+    }
+    if (peek() == 'h') {
+      value += advance();
+      return Token{
+          TokenType::HEX_IMMEDIATE, value, "HEX_IMMEDIATE", line, column};
+    } else if (peek() == 'o' || peek() == 'q') {
+      value += advance();
+      return Token{
+          TokenType::OCT_IMMEDIATE, value, "OCT_IMMEDIATE", line, column};
+    }
+    return Token{TokenType::IMMEDIATE, value, "IMMEDIATE", line, column};
+  }
+  return Token{TokenType::INVALID, value, "INVALID", line, column};
 }
 
 // Read a label from the input string
@@ -349,6 +377,16 @@ Token Lexer::readLabel() {
   return {TokenType::INVALID, value, "INVALID", line, column};
 }
 
+// Identifier
+Token Lexer::readIdentifier() {
+  std::string value;
+  while (isalnum(peek()) || peek() == '_') {
+    value += advance();
+  }
+  return {TokenType::IDENTIFIER, value, "IDENTIFIER", line, column};
+}
+
+// Reading Assembler Directives
 Token Lexer::readDirective() {
   std::string value;
   // the directive is started with a '.'
@@ -362,8 +400,95 @@ Token Lexer::readDirective() {
   if (type == TokenType::DIRECTIVE) {
     return {type, lower, "DIRECTIVE", line, column};
   }
+  if (type == TokenType::SEGMENT_DIRECTIVE) {
+    return {type, lower, "SEGMENT_DIRECTIVE", line, column};
+  }
   // handle values like .-main, _start
-  return {TokenType::VALUE, lower, "VALUE", line, column};
+  return {TokenType::IDENTIFIER, lower, "IDENTIFIER", line, column};
+}
+
+// Read any other keyword from the input string
+Token Lexer::readValue() {
+  std::string keyword;
+  // Read the keyword until a non-alphanumeric character is found
+  while (isalnum(peek()) || peek() == '_') {
+    keyword += advance();
+  }
+  std::string keyword_lower = tokenValueToLower(keyword);
+  TokenType type = keywordTrie->find(keyword_lower);
+  if (type != TokenType::INVALID) {
+    std::string name = getTokenTypeName(type);
+    return {type, keyword_lower, name, line, column};
+  }
+  std::string numberType = detectNumberType(keyword_lower);
+  if (numberType == "Decimal") {
+    return Token{
+        TokenType::IMMEDIATE, keyword_lower, "IMMEDIATE", line, column};
+  }
+  if (numberType == "Hexadecimal") {
+    return Token{
+        TokenType::HEX_IMMEDIATE, keyword_lower, "HEX_IMMEDIATE", line, column};
+  }
+  if (numberType == "Binary") {
+    return Token{
+        TokenType::BIN_IMMEDIATE, keyword_lower, "BIN_IMMEDIATE", line, column};
+  }
+  if (numberType == "Octal") {
+    return Token{
+        TokenType::OCT_IMMEDIATE, keyword_lower, "OCT_IMMEDIATE", line, column};
+  }
+  if (keywordTrie->find(keyword_lower) == TokenType::DIRECTIVE) {
+    return Token{
+        TokenType::DIRECTIVE, keyword_lower, "DIRECTIVE", line, column};
+  }
+  if (keywordTrie->find(keyword_lower) == TokenType::SEGMENT_DIRECTIVE) {
+    return Token{
+        TokenType::SEGMENT_DIRECTIVE,
+        keyword_lower,
+        "SEGMENT_DIRECTIVE",
+        line,
+        column};
+  }
+  if (keywordTrie->find(keyword_lower) == TokenType::DATA_VALUE) {
+    return Token{
+        TokenType::DATA_VALUE, keyword_lower, "DATA_VALUE", line, column};
+  }
+  return Token{TokenType::IDENTIFIER, keyword, "IDENTIFIER", line, column};
+}
+
+// Comma
+Token Lexer::readComma() {
+  std::string value;
+  value += advance();
+  return Token{TokenType::COMMA, value, "COMMA", line, column};
+}
+
+// Colon
+Token Lexer::readColon() {
+  std::string value;
+  value += advance();
+  return Token{TokenType::COLON, value, "COLON", line, column};
+}
+
+// Read the Left Bracket '['
+Token Lexer::readLeftBracket() {
+  std::string value;
+  value += advance();
+  return Token{TokenType::L_BRACKET, value, "L_BRACKET", line, column};
+}
+
+// Read the right Bracket ']'
+Token Lexer::readRightBracket() {
+  std::string value;
+  value += advance();
+  return Token{TokenType::R_BRACKET, value, "R_BRACKET", line, column};
+}
+
+// Read a punctuation character from the input string
+Token Lexer::readPunctuation() {
+  char c = advance();
+  return {
+      TokenType::PUNCTUATION, std::string(1, c), "PUNCTUATION", line, column};
 }
 
 // Read a string for some cases we have strings in the code
@@ -381,6 +506,10 @@ Token Lexer::readString() {
   value += advance();
   return {TokenType::STRING, value, "STRING", line, column};
 }
+
+//==========================================================//
+//                    Tokenization                          //
+//=========================================================//
 
 // Tokenize the input string
 std::vector<Token> Lexer::tokenize() {
@@ -412,23 +541,35 @@ std::vector<Token> Lexer::tokenize() {
           if (c == '.' || c == '_') {
             tokens.push_back(readDirective());
           } else {
-            tokens.push_back(readKeyword());
+            tokens.push_back(readValue());
           }
         }
       } else if (nextColon != std::string::npos && nextColon < nextWhitespace) {
         tokens.push_back(readLabel());
       } else {
-        tokens.push_back(readKeyword());
+        tokens.push_back(readValue());
       }
     } else if (c == '"' || c == '\'') {
       tokens.push_back(readString());
     } else if (
         isdigit(c) ||
         (c == '0' && position + 1 < source.size() &&
-         (source[position + 1] == 'x' || source[position + 1] == 'X')) ||
+         (source[position + 1] == 'x' || source[position + 1] == 'X' ||
+          source[position + 1] == 'b' || source[position + 1] == 'o' ||
+          source[position + 1] == 'O' || source[position + 1] == 'q')) ||
         (c == '-' && position + 1 < source.size() &&
          isdigit(source[position + 1]))) {
       tokens.push_back(readImmediate());
+    } else if (c == ',') {
+      tokens.push_back(readComma());
+    } else if (c == ':') {
+      tokens.push_back(readColon());
+    } else if (c == '[') {
+      tokens.push_back(readLeftBracket());
+    } else if (c == ']') {
+      tokens.push_back(readRightBracket());
+    } else if (c == ';') {
+      skipComment();
     } else if (
         std::find(
             punctuations.begin(), punctuations.end(), std::string(1, c)) !=

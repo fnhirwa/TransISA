@@ -26,16 +26,26 @@ enum AddressingMode {
 };
 
 enum class TokenType {
-  INSTRUCTION,
-  REGISTER,
-  IMMEDIATE,
-  PUNCTUATION,
-  LABEL,
-  INVALID,
-  DIRECTIVE,
-  STRING,
-  VALUE,
-  END,
+  INSTRUCTION, // MOV, ADD, SUB, etc.
+  REGISTER, // EAX, EBX, RAX, etc.
+  IMMEDIATE, // Decimal immediate
+  HEX_IMMEDIATE, // Hex numbers (0x...)
+  BIN_IMMEDIATE, // Binary numbers (0b...)
+  OCT_IMMEDIATE, // Octal numbers (0o...)
+  LABEL, // Function or jump label
+  IDENTIFIER, // Variable or symbol
+  DIRECTIVE, // Assembler directives (.macro, .include, .ifdef, .endif)
+  VALUE, // General value
+  DATA_VALUE, // Used in `db`, `dw`, etc.
+  COMMA, // ,
+  COLON, // :
+  L_BRACKET, // [
+  R_BRACKET, // ]
+  SEGMENT_DIRECTIVE, // .text, .data, .bss
+  PUNCTUATION, // Other punctuation
+  STRING, // "Hello, world!"
+  INVALID, // Unknown token
+  END // End of file/input
 };
 
 struct Token {
