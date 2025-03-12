@@ -356,23 +356,6 @@ Token Lexer::readLabel() {
     return {TokenType::LABEL, value, "LABEL", line, column};
   } else if (peek() == ' ') {
     skipWhitespace();
-  } else if (peek() == '[') {
-    std::string addressing_mode;
-    addressing_mode += advance(); // Consume '['
-    while (peek() != ']' && peek() != '\0') {
-      addressing_mode += advance();
-    }
-    if (peek() == ']') {
-      addressing_mode += advance(); // Consume ']'
-    } else {
-      reportError("Unterminated addressing mode in label: " + value);
-    }
-    return {
-        TokenType::INSTRUCTION,
-        value + addressing_mode,
-        "INSTRUCTION",
-        line,
-        column};
   }
   return {TokenType::INVALID, value, "INVALID", line, column};
 }
