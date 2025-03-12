@@ -8,15 +8,15 @@ using namespace std;
 TEST(LexerTest, HandlesSimpleInput) {
   string test_example1 = ".section .rodata\nmov eax, 5\n ADd ebx, 10\n end";
   vector<Token> exepected_tokens = {
-      {TokenType::DIRECTIVE, ".section", "DIRECTIVE", 1, 9},
-      {TokenType::DIRECTIVE, ".rodata", "DIRECTIVE", 1, 17},
+      {TokenType::SEGMENT_DIRECTIVE, ".section", "SEGMENT_DIRECTIVE", 1, 9},
+      {TokenType::SEGMENT_DIRECTIVE, ".rodata", "SEGMENT_DIRECTIVE", 1, 17},
       {TokenType::INSTRUCTION, "mov", "INSTRUCTION", 2, 5},
       {TokenType::REGISTER, "eax", "REGISTER", 2, 9},
-      {TokenType::PUNCTUATION, ",", "PUNCTUATION", 2, 10},
+      {TokenType::COMMA, ",", "COMMA", 2, 10},
       {TokenType::IMMEDIATE, "5", "IMMEDIATE", 2, 12},
       {TokenType::INSTRUCTION, "add", "INSTRUCTION", 3, 6},
       {TokenType::REGISTER, "ebx", "REGISTER", 3, 10},
-      {TokenType::PUNCTUATION, ",", "PUNCTUATION", 3, 11},
+      {TokenType::COMMA, ",", "COMMA", 3, 11},
       {TokenType::IMMEDIATE, "10", "IMMEDIATE", 3, 14},
       {TokenType::INSTRUCTION, "end", "INSTRUCTION", 4, 6},
       {TokenType::END, "END", "END", 4, 6}};
