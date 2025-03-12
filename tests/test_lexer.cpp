@@ -10,16 +10,16 @@ TEST(LexerTest, HandlesSimpleInput) {
   vector<Token> exepected_tokens = {
       {TokenType::SEGMENT_DIRECTIVE, ".section", "SEGMENT_DIRECTIVE", 1, 9},
       {TokenType::SEGMENT_DIRECTIVE, ".rodata", "SEGMENT_DIRECTIVE", 1, 17},
-      {TokenType::INSTRUCTION, "mov", "INSTRUCTION", 2, 5},
-      {TokenType::REGISTER, "eax", "REGISTER", 2, 9},
-      {TokenType::COMMA, ",", "COMMA", 2, 10},
-      {TokenType::IMMEDIATE, "5", "IMMEDIATE", 2, 12},
-      {TokenType::INSTRUCTION, "add", "INSTRUCTION", 3, 6},
-      {TokenType::REGISTER, "ebx", "REGISTER", 3, 10},
-      {TokenType::COMMA, ",", "COMMA", 3, 11},
-      {TokenType::IMMEDIATE, "10", "IMMEDIATE", 3, 14},
-      {TokenType::INSTRUCTION, "end", "INSTRUCTION", 4, 6},
-      {TokenType::END, "END", "END", 4, 6}};
+      {TokenType::INSTRUCTION, "mov", "INSTRUCTION", 2, 4},
+      {TokenType::REGISTER, "eax", "REGISTER", 2, 8},
+      {TokenType::COMMA, ",", "COMMA", 2, 9},
+      {TokenType::IMMEDIATE, "5", "IMMEDIATE", 2, 11},
+      {TokenType::INSTRUCTION, "add", "INSTRUCTION", 3, 5},
+      {TokenType::REGISTER, "ebx", "REGISTER", 3, 9},
+      {TokenType::COMMA, ",", "COMMA", 3, 10},
+      {TokenType::IMMEDIATE, "10", "IMMEDIATE", 3, 13},
+      {TokenType::INSTRUCTION, "end", "INSTRUCTION", 4, 5},
+      {TokenType::END, "END", "END", 4, 5}};
   Lexer lexer(test_example1);
   vector<Token> tokens = lexer.tokenize();
 
