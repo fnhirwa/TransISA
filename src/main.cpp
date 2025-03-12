@@ -1,5 +1,6 @@
 #include <iostream>
 #include "lexer/Lexer.h"
+#include "parser/Parser.h"
 
 using namespace std;
 
@@ -18,6 +19,15 @@ int main(int argc, char* argv[]) {
     for (const Token& token : tokens) {
       std::cout << token.value << " " << token.type_name << " " << token.line
                 << " " << token.column << std::endl;
+    }
+
+    // Parsing to AST
+    Parser parser(tokens);
+    std::unique_ptr<ASTNode> ast = parser.parseExpression();
+
+    if (ast == nullptr) {
+      std::cerr << "Error parsing expression" << std::endl;
+      return 1;
     }
   } catch (const std::exception& e) {
     std::cerr << e.what() << '\n';

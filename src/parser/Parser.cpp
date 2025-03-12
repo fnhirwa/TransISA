@@ -1,5 +1,32 @@
 #include "parser/Parser.h"
 
+// Constructor for the Parser class
+Parser::Parser(const std::vector<Token>& tokens) : tokens(tokens) {
+  position = 0;
+}
+
+// parsePrimaryExpr method implementation
+std::unique_ptr<ASTNode> Parser::parsePrimaryExpr() {
+  Token currentToken = peek();
+  if (currentToken.type == TokenType::IMMEDIATE ||
+      currentToken.type == TokenType::HEX_IMMEDIATE ||
+      currentToken.type == TokenType::BIN_IMMEDIATE ||
+      currentToken.type == TokenType::OCT_IMMEDIATE) {
+    return parseImmediate();
+  } else if (currentToken.type == TokenType::REGISTER) {
+    return parseRegister();
+  } else if (currentToken.type == TokenType::LABEL) {
+    return parseLabel();
+  } else if (currentToken.type == TokenType::DIRECTIVE) {
+    return parseDirective();
+  } else if (currentToken.type == TokenType::STRING) {
+    return parseString();
+  } else if (currentToken.type == TokenType::INSTRUCTION) {
+    return parseInstruction();
+  }
+  return nullptr;
+}
+
 Token Parser::peek() {
   if (position < tokens.size())
     return tokens[position];
@@ -117,7 +144,7 @@ std::unique_ptr<ASTNode> Parser::parseFunctionCall(const std::string& callee) {
   return std::make_unique<FunctionCallNode>(callee, std::move(args));
 }
 
-// // Function to parse binary operations
+// Function to parse binary operations
 std::unique_ptr<ASTNode> Parser::parseBinaryOpRHS(
     int exprPrecedence,
     std::unique_ptr<ASTNode> LHS) {

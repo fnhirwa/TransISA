@@ -29,6 +29,9 @@ struct ASTNode {
   virtual llvm::Value* codegen(
       llvm::IRBuilder<>& builder,
       llvm::Module& module) = 0;
+  virtual std::string toString() {
+    return "ASTNode";
+  }
 };
 
 // Integer literals
@@ -40,6 +43,12 @@ struct IntLiteralNode : ASTNode {
     return llvm::ConstantInt::get(
         llvm::Type::getInt32Ty(module.getContext()), value);
   }
+  std::string toString() override {
+    std::string str = "IntLiteralNode(";
+    str += std::to_string(value);
+    str += ")";
+    return str;
+  }
 };
 
 // Register literals
@@ -49,6 +58,12 @@ struct RegisterNode : ASTNode {
   llvm::Value* codegen(llvm::IRBuilder<>& builder, llvm::Module& module)
       override {
     return nullptr;
+  }
+  std::string toString() override {
+    std::string str = "RegisterNode(";
+    str += value;
+    str += ")";
+    return str;
   }
 };
 
@@ -60,6 +75,12 @@ struct LabelNode : ASTNode {
       override {
     return nullptr;
   }
+  std::string toString() override {
+    std::string str = "LabelNode(";
+    str += value;
+    str += ")";
+    return str;
+  }
 };
 
 // Directive Node
@@ -70,6 +91,12 @@ struct DirectiveNode : ASTNode {
       override {
     return nullptr;
   }
+  std::string toString() override {
+    std::string str = "DirectiveNode(";
+    str += value;
+    str += ")";
+    return str;
+  }
 };
 
 // String Node
@@ -79,6 +106,12 @@ struct StringNode : ASTNode {
   llvm::Value* codegen(llvm::IRBuilder<>& builder, llvm::Module& module)
       override {
     return nullptr;
+  }
+  std::string toString() override {
+    std::string str = "StringNode(";
+    str += value;
+    str += ")";
+    return str;
   }
 };
 
@@ -110,6 +143,16 @@ struct BinaryOpNode : ASTNode {
       return builder.CreateSDiv(L, R, "divtmp");
     return nullptr;
   }
+  std::string toString() override {
+    std::string str = "BinaryOpNode(";
+    str += left_val->toString();
+    str += ", ";
+    str += operation;
+    str += ", ";
+    str += right_val->toString();
+    str += ")";
+    return str;
+  }
 };
 
 // Function calls Node
@@ -133,6 +176,18 @@ struct FunctionCallNode : ASTNode {
       argsValues.push_back(arg->codegen(builder, module));
     }
     return builder.CreateCall(func, argsValues, "calltmp");
+  }
+  std::string toString() override {
+    std::string str = "FunctionCallNode(";
+    str += callee;
+    str += ", [";
+    for (size_t i = 0; i < args.size(); i++) {
+      str += args[i]->toString();
+      if (i < args.size() - 1)
+        str += ", ";
+    }
+    str += "])";
+    return str;
   }
 };
 
