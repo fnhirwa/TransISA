@@ -1,12 +1,9 @@
 #ifndef AST_H
 #define AST_H
 
-#include <llvm/IR/IRBuilder.h>
-#include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/Module.h>
+#include <iostream>
 #include <memory>
 #include <string>
-#include <variant>
 #include <vector>
 
 /*
@@ -24,170 +21,148 @@ calls the function.
 */
 
 // Base class for all AST nodes
-struct ASTNode {
+class ASTNode {
+ public:
+  virtual void print(
+      int indent = 0) const = 0; // Print function with indentation
   virtual ~ASTNode() = default;
-  virtual llvm::Value* codegen(
-      llvm::IRBuilder<>& builder,
-      llvm::Module& module) = 0;
-  virtual std::string toString() {
-    return "ASTNode";
+  std::vector<std::unique_ptr<ASTNode>> children;
+
+  void addBasicBlock(std::unique_ptr<ASTNode> block) {
+    children.push_back(std::move(block));
+  }
+
+ protected:
+  void printIndent(int indent) const {
+    for (int i = 0; i < indent; ++i)
+      std::cout << "  ";
   }
 };
 
-// Integer literals
-struct IntLiteralNode : ASTNode {
+// Root node for the AST
+class RootNode : public ASTNode {
+ public:
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "RootNode:\n";
+    for (const auto& child : children) {
+      child->print(indent + 1);
+    }
+  }
+};
+
+// Global variable Node (.data section)
+class GlobalVariableNode : public ASTNode {
+ public:
+  std::string name;
+  std::string value;
+  GlobalVariableNode(const std::string& name, const std::string& value)
+      : name(name), value(value) {}
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "GlobalVariable: " << name << " = " << value << "\n";
+  }
+};
+
+// Function Node (.text section)
+class FunctionNode : public ASTNode {
+ public:
+  std::string name;
+  std::vector<std::unique_ptr<ASTNode>> basicBlocks;
+  FunctionNode(const std::string name) : name(std::move(name)) {}
+
+  void addBasicBlock(std::unique_ptr<ASTNode> block) {
+    basicBlocks.push_back(std::move(block));
+  }
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "Function: " << name << "\n";
+    for (const auto& block : basicBlocks) {
+      block->print(indent + 1);
+    }
+  }
+};
+
+// Basic Block
+class BasicBlockNode : public ASTNode {
+ public:
+  std::string label;
+  std::vector<std::unique_ptr<ASTNode>> instructions;
+  explicit BasicBlockNode(const std::string& label) : label(label) {}
+  void addBasicBlock(std::unique_ptr<ASTNode> instr) {
+    instructions.push_back(std::move(instr));
+  }
+
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "BasicBlock: " << label << "\n";
+    for (const auto& instr : instructions) {
+      instr->print(indent + 1);
+    }
+  }
+};
+
+// Instruction Node
+class InstructionNode : public ASTNode {
+ public:
+  std::string opcode;
+  std::vector<std::string> operands;
+  InstructionNode(
+      const std::string& opcode,
+      const std::vector<std::string>& operands)
+      : opcode(opcode), operands(operands) {}
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "Instruction: " << opcode << " ";
+    for (const auto& operand : operands) {
+      std::cout << operand << " ";
+    }
+    std::cout << "\n";
+  }
+};
+
+// Register Node
+class RegisterNode : public ASTNode {
+ public:
+  std::string registerName;
+  explicit RegisterNode(const std::string& registerName)
+      : registerName(registerName) {}
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "Register: " << registerName << "\n";
+  }
+};
+
+// Integer Literal Node
+class IntLiteralNode : public ASTNode {
+ public:
   int value;
-  IntLiteralNode(int value) : value(value) {}
-  llvm::Value* codegen(llvm::IRBuilder<>& builder, llvm::Module& module)
-      override {
-    return llvm::ConstantInt::get(
-        llvm::Type::getInt32Ty(module.getContext()), value);
-  }
-  std::string toString() override {
-    std::string str = "IntLiteralNode(";
-    str += std::to_string(value);
-    str += ")";
-    return str;
-  }
-};
-
-// Register literals
-struct RegisterNode : ASTNode {
-  std::string value;
-  RegisterNode(std::string value) : value(value) {}
-  llvm::Value* codegen(llvm::IRBuilder<>& builder, llvm::Module& module)
-      override {
-    return nullptr;
-  }
-  std::string toString() override {
-    std::string str = "RegisterNode(";
-    str += value;
-    str += ")";
-    return str;
-  }
-};
-
-// Label Node
-struct LabelNode : ASTNode {
-  std::string value;
-  LabelNode(std::string value) : value(value) {}
-  llvm::Value* codegen(llvm::IRBuilder<>& builder, llvm::Module& module)
-      override {
-    return nullptr;
-  }
-  std::string toString() override {
-    std::string str = "LabelNode(";
-    str += value;
-    str += ")";
-    return str;
-  }
-};
-
-// Directive Node
-struct DirectiveNode : ASTNode {
-  std::string value;
-  DirectiveNode(std::string value) : value(value) {}
-  llvm::Value* codegen(llvm::IRBuilder<>& builder, llvm::Module& module)
-      override {
-    return nullptr;
-  }
-  std::string toString() override {
-    std::string str = "DirectiveNode(";
-    str += value;
-    str += ")";
-    return str;
+  explicit IntLiteralNode(int value) : value(value) {}
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "IntLiteral: " << value << "\n";
   }
 };
 
 // String Node
-struct StringNode : ASTNode {
+class StringNode : public ASTNode {
+ public:
   std::string value;
-  StringNode(std::string value) : value(value) {}
-  llvm::Value* codegen(llvm::IRBuilder<>& builder, llvm::Module& module)
-      override {
-    return nullptr;
-  }
-  std::string toString() override {
-    std::string str = "StringNode(";
-    str += value;
-    str += ")";
-    return str;
+  explicit StringNode(const std::string& value) : value(value) {}
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "String: " << value << "\n";
   }
 };
 
-// Node for binary operations (e.g., add, sub)
-struct BinaryOpNode : ASTNode {
-  std::string operation;
-  std::unique_ptr<ASTNode> left_val, right_val;
-
-  BinaryOpNode(
-      std::string operation,
-      std::unique_ptr<ASTNode> left_val,
-      std::unique_ptr<ASTNode> right_val)
-      : operation(operation), left_val(std::move(left_val)),
-        right_val(std::move(right_val)) {}
-
-  llvm::Value* codegen(llvm::IRBuilder<>& builder, llvm::Module& module)
-      override {
-    llvm::Value* L = left_val->codegen(builder, module);
-    llvm::Value* R = right_val->codegen(builder, module);
-    if (!L || !R)
-      return nullptr;
-    if (operation == "+")
-      return builder.CreateAdd(L, R, "addtmp");
-    if (operation == "-")
-      return builder.CreateSub(L, R, "subtmp");
-    if (operation == "*")
-      return builder.CreateMul(L, R, "multmp");
-    if (operation == "/")
-      return builder.CreateSDiv(L, R, "divtmp");
-    return nullptr;
-  }
-  std::string toString() override {
-    std::string str = "BinaryOpNode(";
-    str += left_val->toString();
-    str += ", ";
-    str += operation;
-    str += ", ";
-    str += right_val->toString();
-    str += ")";
-    return str;
-  }
-};
-
-// Function calls Node
-struct FunctionCallNode : ASTNode {
-  std::string callee;
-  std::vector<std::unique_ptr<ASTNode>> args;
-
-  FunctionCallNode(
-      std::string callee,
-      std::vector<std::unique_ptr<ASTNode>> args)
-      : callee(callee), args(std::move(args)) {}
-
-  llvm::Value* codegen(llvm::IRBuilder<>& builder, llvm::Module& module)
-      override {
-    llvm::Function* func = module.getFunction(callee);
-    if (!func) {
-      throw std::runtime_error("Function not found: " + callee);
-    }
-    std::vector<llvm::Value*> argsValues;
-    for (auto& arg : args) {
-      argsValues.push_back(arg->codegen(builder, module));
-    }
-    return builder.CreateCall(func, argsValues, "calltmp");
-  }
-  std::string toString() override {
-    std::string str = "FunctionCallNode(";
-    str += callee;
-    str += ", [";
-    for (size_t i = 0; i < args.size(); i++) {
-      str += args[i]->toString();
-      if (i < args.size() - 1)
-        str += ", ";
-    }
-    str += "])";
-    return str;
+// System Call Node
+class SyscallNode : public ASTNode {
+ public:
+  int sysCallNumber;
+  explicit SyscallNode(int sysCallNumber) : sysCallNumber(sysCallNumber) {}
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "Syscall: " << sysCallNumber << "\n";
   }
 };
 

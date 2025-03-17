@@ -1,177 +1,99 @@
 #include "parser/Parser.h"
 
-// Constructor for the Parser class
-Parser::Parser(const std::vector<Token>& tokens) : tokens(tokens) {
-  position = 0;
-}
+// Constructor: Initializes the parser with tokens
+Parser::Parser(std::vector<Token> tokens)
+    : tokens(std::move(tokens)), index(0) {}
 
-// parsePrimaryExpr method implementation
-std::unique_ptr<ASTNode> Parser::parsePrimaryExpr() {
-  Token currentToken = peek();
-  if (currentToken.type == TokenType::IMMEDIATE ||
-      currentToken.type == TokenType::HEX_IMMEDIATE ||
-      currentToken.type == TokenType::BIN_IMMEDIATE ||
-      currentToken.type == TokenType::OCT_IMMEDIATE) {
-    return parseImmediate();
-  } else if (currentToken.type == TokenType::REGISTER) {
-    return parseRegister();
-  } else if (currentToken.type == TokenType::LABEL) {
-    return parseLabel();
-  } else if (currentToken.type == TokenType::DIRECTIVE) {
-    return parseDirective();
-  } else if (currentToken.type == TokenType::STRING) {
-    return parseString();
-  } else if (currentToken.type == TokenType::INSTRUCTION) {
-    return parseInstruction();
-  }
-  return nullptr;
-}
-
+// Peek at the current token without consuming
 Token Parser::peek() {
-  if (position < tokens.size())
-    return tokens[position];
-  return {TokenType::END, "", "END", 0, 0};
+  return (index < tokens.size()) ? tokens[index]
+                                 : Token{TokenType::END, "END", "END", 0, 0};
 }
 
-Token Parser::advance() {
-  if (position < tokens.size())
-    return tokens[position++];
-  return {TokenType::END, "", "END", 0, 0};
+// Consume the current token and advance
+Token Parser::consume() {
+  return (index < tokens.size()) ? tokens[index++]
+                                 : Token{TokenType::END, "END", "END", 0, 0};
 }
 
-bool Parser::match(TokenType type) {
-  if (peek().type == type) {
-    advance();
-    return true;
-  }
-  return false;
-}
+// Entry point for parsing
+std::unique_ptr<RootNode> Parser::parse() {
+  auto root = std::make_unique<RootNode>();
 
-std::unique_ptr<ASTNode> Parser::parseImmediate() {
-  Token imm = advance();
-  return std::make_unique<IntLiteralNode>(std::stoi(imm.value));
-}
-
-std::unique_ptr<ASTNode> Parser::parseRegister() {
-  Token reg = advance();
-  return std::make_unique<RegisterNode>(reg.value);
-}
-
-std::unique_ptr<ASTNode> Parser::parseLabel() {
-  Token label = advance();
-  return std::make_unique<LabelNode>(label.value);
-}
-
-std::unique_ptr<ASTNode> Parser::parseDirective() {
-  Token directive = advance();
-  return std::make_unique<DirectiveNode>(directive.value);
-}
-
-std::unique_ptr<ASTNode> Parser::parseString() {
-  Token str = advance();
-  return std::make_unique<StringNode>(str.value);
-}
-
-std::unique_ptr<ASTNode> Parser::parseInstruction() {
-  Token instr = advance(); // Get instruction token (e.g., `mov`, `add`)
-  std::vector<std::string> binaryInstructions = {
-      "mov", "add", "sub", "mul", "div", "mod"};
-  // hashmap for the instructions +, -, *, /, %
-  std::unordered_map<std::string, std::string> binaryInstructionsMap = {
-      {"add", "+"},
-      {"sub", "-"},
-      {"mul", "*"},
-      {"div", "/"},
-      {"mod", "%"},
-      {"mov", "mov"}};
-  // Check if the instruction is a binary operation
-  if (std::find(
-          binaryInstructions.begin(), binaryInstructions.end(), instr.value) !=
-      binaryInstructions.end()) {
-    // Parse the first operand
-    auto dest = parseRegister();
-    if (!dest)
-      return nullptr;
-    // skip the comma
-    match(TokenType::PUNCTUATION);
-    // Parse the second operand
-    if (peek().type == TokenType::IMMEDIATE) {
-      auto src = parseImmediate();
-      if (!src)
-        return nullptr;
-
-      return std::make_unique<BinaryOpNode>(
-          binaryInstructionsMap[instr.value], std::move(dest), std::move(src));
-    } else if (peek().type == TokenType::REGISTER) {
-      auto src = parseRegister();
-      if (!src)
-        return nullptr;
-      return std::make_unique<BinaryOpNode>(
-          binaryInstructionsMap[instr.value], std::move(dest), std::move(src));
-    } else if (peek().type == TokenType::VALUE) {
-      auto src = parseLabel();
-      if (!src)
-        return nullptr;
-      return std::make_unique<BinaryOpNode>(
-          binaryInstructionsMap[instr.value], std::move(dest), std::move(src));
+  while (index < tokens.size()) {
+    Token currentToken = peek();
+    if (currentToken.type == TokenType::SEGMENT_DIRECTIVE &&
+        currentToken.value == ".data") {
+      consume();
+      parseDataSection(root);
+    } else if (
+        currentToken.type == TokenType::SEGMENT_DIRECTIVE &&
+        currentToken.value == ".text") {
+      consume();
+      parseTextSection(root);
+    } else {
+      consume(); // Skip unrecognized tokens
     }
   }
-  return nullptr;
+  return root;
 }
 
-// Function to parse a primary expression an expression that is not a binary
-// operation. This can be an integer literal or a function call.
-std::unique_ptr<ASTNode> Parser::parseExpression() {
-  auto LHS = parsePrimaryExpr();
-  if (!LHS)
-    return nullptr;
+// Parse the .data section (global variables)
+void Parser::parseDataSection(std::unique_ptr<RootNode>& root) {
+  while (index < tokens.size()) {
+    Token currentToken = peek();
+    if (currentToken.type == TokenType::SEGMENT_DIRECTIVE)
+      break; // End of .data section
 
-  return parseBinaryOpRHS(0, std::move(LHS));
-}
-
-// // Function to parse function calls
-std::unique_ptr<ASTNode> Parser::parseFunctionCall(const std::string& callee) {
-  std::vector<std::unique_ptr<ASTNode>> args;
-  if (position >= tokens.size() || tokens[position].value != "(")
-    return nullptr;
-  while (position < tokens.size() && tokens[position].value != ")") {
-    args.push_back(parseExpression());
-    if (position < tokens.size() && tokens[position].value == ",")
-      position++;
-  }
-  if (position < tokens.size() && tokens[position].value == ")")
-    position++;
-  return std::make_unique<FunctionCallNode>(callee, std::move(args));
-}
-
-// Function to parse binary operations
-std::unique_ptr<ASTNode> Parser::parseBinaryOpRHS(
-    int exprPrecedence,
-    std::unique_ptr<ASTNode> LHS) {
-  while (true) {
-    if (position >= tokens.size())
-      return LHS;
-    Token currentToken = tokens[position];
-    if (currentToken.type != TokenType::INSTRUCTION)
-      return LHS;
-    int currentPrecedence = getPrecedence(currentToken.value);
-    if (currentPrecedence < exprPrecedence)
-      return LHS;
-    position++;
-    auto RHS = parsePrimaryExpr();
-    if (!RHS)
-      return nullptr;
-    if (position >= tokens.size())
-      return std::make_unique<BinaryOpNode>(
-          currentToken.value, std::move(LHS), std::move(RHS));
-    Token nextToken = tokens[position];
-    int nextPrecedence = getPrecedence(nextToken.value);
-    if (currentPrecedence < nextPrecedence) {
-      RHS = parseBinaryOpRHS(currentPrecedence + 1, std::move(RHS));
-      if (!RHS)
-        return nullptr;
+    if (currentToken.type == TokenType::IDENTIFIER) {
+      std::string varName = consume().value;
+      if (peek().type == TokenType::DATA_VALUE) {
+        consume(); // Consume db, dw, etc.
+        Token valueToken = consume();
+        auto varNode =
+            std::make_unique<GlobalVariableNode>(varName, valueToken.value);
+        root->addBasicBlock(std::move(varNode)); // Store in AST
+      }
+    } else {
+      consume(); // Ignore other tokens
     }
-    LHS = std::make_unique<BinaryOpNode>(
-        currentToken.value, std::move(LHS), std::move(RHS));
+  }
+}
+
+// Parse the .text section (functions & instructions)
+void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
+  std::unique_ptr<FunctionNode> function = nullptr;
+  std::unique_ptr<BasicBlockNode> basicBlock = nullptr;
+
+  while (index < tokens.size()) {
+    Token currentToken = peek();
+    if (currentToken.type == TokenType::SEGMENT_DIRECTIVE)
+      break; // End of .text section
+
+    if (currentToken.type == TokenType::LABEL) {
+      if (function) {
+        function->addBasicBlock(std::move(basicBlock));
+        root->addBasicBlock(std::move(function));
+      }
+      function = std::make_unique<FunctionNode>(currentToken.value);
+      basicBlock = std::make_unique<BasicBlockNode>("entry");
+      consume(); // Consume label
+    } else if (currentToken.type == TokenType::INSTRUCTION) {
+      std::string opcode = consume().value;
+      std::vector<std::string> operands;
+      while (peek().type != TokenType::INSTRUCTION &&
+             peek().type != TokenType::LABEL && peek().type != TokenType::END) {
+        operands.push_back(consume().value);
+      }
+      auto instr = std::make_unique<InstructionNode>(opcode, operands);
+      basicBlock->addBasicBlock(std::move(instr));
+    } else {
+      consume();
+    }
+  }
+
+  if (function) {
+    function->addBasicBlock(std::move(basicBlock));
+    root->addBasicBlock(std::move(function));
   }
 }
