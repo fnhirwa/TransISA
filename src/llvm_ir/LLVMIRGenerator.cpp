@@ -272,8 +272,21 @@ void LLVMIRGen::handleLeaInstructionNode(InstructionNode* node) {
     // Handle global symbol like `msg`
     llvm::GlobalVariable* globalVar = module.getNamedGlobal(memNode->base);
     if (globalVar) {
-      effectiveAddr = builder.CreateBitCast(
-          globalVar, llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0));
+      effectiveAddr =
+          builder.CreateBitCast(globalVar, llvm::PointerType::get(context, 0));
+      // We need to store this address in the destination register
+      // But we need to ensure the destination register is allocated
+      // means exists in namedValues
+      if (namedValues.find(destReg->registerName) == namedValues.end()) {
+        // create an alloca for the destination reg if it doesn't exist
+        llvm::Type* registerType = llvm::PointerType::get(context, 0);
+        llvm::AllocaInst* allocaInst =
+            builder.CreateAlloca(registerType, nullptr, destReg->registerName);
+        namedValues[destReg->registerName] = allocaInst;
+      }
+      // store the effective address in the destination register
+      llvm::Value* destPtr = namedValues[destReg->registerName];
+      builder.CreateStore(effectiveAddr, destPtr);
     } else {
       std::cerr << "Error: Global variable '" << memNode->base
                 << "' not found\n";
@@ -283,15 +296,6 @@ void LLVMIRGen::handleLeaInstructionNode(InstructionNode* node) {
     std::cerr << "Error: Source of 'lea' must be a memory operand\n";
     return;
   }
-
-  // Store in namedValues and ensure it exists in IR
-  llvm::AllocaInst* ecxVar = builder.CreateAlloca(
-      llvm::PointerType::get(llvm::Type::getInt8Ty(context), 0),
-      0,
-      destReg->registerName);
-  builder.CreateStore(effectiveAddr, ecxVar);
-
-  namedValues[destReg->registerName] = ecxVar; // Keep track in map
 }
 
 void LLVMIRGen::handleIntInstructionNode(InstructionNode* node) {
@@ -365,42 +369,147 @@ void LLVMIRGen::handleIntInstructionNode(InstructionNode* node) {
     // Store result in EAX (as per x86 convention)
     namedValues["eax"] = result;
 
-#elif defined(__aarch64__)
-    // Get the syscall number (stored in "eax" in x86, but should be "x8" in
-    // ARM64)
-    llvm::Value* syscallNumber = namedValues["eax"];
-    if (!syscallNumber) {
-      std::cerr << "Error: EAX not set before system call\n";
-      return;
+#elif defined(__APPLE__) && defined(__aarch64__)
+    // For macOS ARM64, we need to use inline assembly for system calls
+    // Create a function type for our inline assembly
+    std::vector<llvm::Type*> asmParamTypes = {
+        llvm::Type::getInt64Ty(context), // fd
+        llvm::Type::getInt64Ty(context), // buffer
+        llvm::Type::getInt64Ty(context) // length
+    };
+    llvm::FunctionType* asmFuncType = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(context), // Return type (void)
+        asmParamTypes,
+        false // isVarArg
+    );
+
+    // Helper function to load and convert values to i64
+    auto loadAndConvertToInt64 = [&](const std::string& regName,
+                                     llvm::Type* regType) -> llvm::Value* {
+      if (namedValues.count(regName)) {
+        llvm::Value* regValue = namedValues[regName];
+        if (regValue->getType()->isPointerTy()) {
+          // If the value is a pointer, load it first
+          llvm::Value* loadedValue = builder.CreateLoad(regType, regValue);
+          return builder.CreateZExtOrTrunc(
+              loadedValue, llvm::Type::getInt64Ty(context));
+        } else if (regValue->getType()->isIntegerTy()) {
+          // If the value is an integer, zero-extend it to i64
+          return builder.CreateZExtOrTrunc(
+              regValue, llvm::Type::getInt64Ty(context));
+        } else {
+          throw std::runtime_error("Unsupported type for register: " + regName);
+        }
+      } else {
+        // Provide a default value if the register is not found
+        return llvm::ConstantInt::get(context, llvm::APInt(64, 0));
+      }
+    };
+
+    // Get arguments for the syscall
+    llvm::Value* arg0 = loadAndConvertToInt64(
+        "ebx", llvm::Type::getInt32Ty(context)); // File descriptor (stdout)
+
+    llvm::Value* arg1 = nullptr;
+    if (namedValues.count("ecx")) {
+      // First load the pointer stored in ecx
+      llvm::Value* loadedPtr = builder.CreateLoad(
+          llvm::PointerType::get(context, 0), // Load as pointer type
+          namedValues["ecx"]);
+      // Then convert that pointer to an integer
+      arg1 = builder.CreatePtrToInt(loadedPtr, llvm::Type::getInt64Ty(context));
+
+    } else {
+      arg1 = llvm::ConstantInt::get(context, llvm::APInt(64, 0));
     }
 
-    // Assign syscall number to x8 (for ARM64)
-    namedValues["x8"] = syscallNumber;
+    llvm::Value* arg2 = loadAndConvertToInt64(
+        "edx", llvm::Type::getInt32Ty(context)); // Length of the message
 
-    // Map arguments from x86 registers to ARM64 registers
-    llvm::Value* arg0 = namedValues.count("ebx")
-        ? namedValues["ebx"]
-        : llvm::ConstantInt::get(context, llvm::APInt(64, 0));
-    llvm::Value* arg1 = namedValues.count("ecx")
-        ? namedValues["ecx"]
-        : llvm::ConstantInt::get(context, llvm::APInt(64, 0));
-    llvm::Value* arg2 = namedValues.count("edx")
-        ? namedValues["edx"]
-        : llvm::ConstantInt::get(context, llvm::APInt(64, 0));
+    // arg3 esi
+    // arg4 edi
+    // arg5 ebp
 
-    // Store arguments in correct ARM64 registers
-    namedValues["x0"] = arg0;
-    namedValues["x1"] = arg1;
-    namedValues["x2"] = arg2;
+    /*
+    For MacOS ARM64:arg0
+    x16 = syscall number
+    x0 = arg0
+    x1 = arg1
+    x2 = arg2
+    x3 = arg3
+    ...
 
-    // Inline assembly for `svc #0`
-    llvm::InlineAsm* svcAsm = llvm::InlineAsm::get(
-        llvm::FunctionType::get(llvm::Type::getVoidTy(context), {}, false),
-        "svc #0x80",
-        "",
-        true /* hasSideEffects */
+    syscall number = 0x2000004 (write)
+
+    For x86_6 using syscall function
+    syscall number = rax
+    arg1 = rdi
+    arg2 = rsi
+    arg3 = rdx
+    arg4 = r10
+    arg5 = r8
+    arg6 = r9
+    */
+
+    // Create inline assembly for the syscall
+    std::string asmString =
+        "mov x0, $0\n"
+        "mov x1, $1\n"
+        "mov x2, $2\n"
+        "mov x16, #4\n" // Base syscall number for write
+        "orr x16, x16, #0x2000000\n" // OR with macOS prefix
+        "svc #0x80\n"; // Make the syscall
+
+    std::string constraints = "r,r,r";
+
+    // Create the inline assembly call
+    llvm::InlineAsm* inlineAsm = llvm::InlineAsm::get(
+        asmFuncType,
+        asmString,
+        constraints,
+        true // hasSideEffects
     );
-    builder.CreateCall(svcAsm);
+
+    // Make the call
+    std::vector<llvm::Value*> args = {arg0, arg1, arg2};
+    builder.CreateCall(inlineAsm, args);
+
+    // Handle exit syscall (assuming this is for int 0x80 with eax = 1)
+    // In macOS ARM64, the exit syscall number is 1
+
+    // Get the exit status code (usually in ebx)
+    llvm::Value* exitStatus = loadAndConvertToInt64(
+        "ebx", llvm::Type::getInt32Ty(context)); // Exit status code
+
+    // Create function type for exit syscall (only needs one parameter)
+    std::vector<llvm::Type*> exitAsmParamTypes = {
+        llvm::Type::getInt64Ty(context) // exit status
+    };
+    llvm::FunctionType* exitAsmFuncType = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(context), // Return type (void)
+        exitAsmParamTypes,
+        false // isVarArg
+    );
+
+    // Create inline assembly for the exit syscall
+    std::string exitAsmString =
+        "mov x0, $0\n"
+        "mov x16, #1\n" // Base syscall number for exit
+        "orr x16, x16, #0x2000000\n" // OR with macOS prefix
+        "svc #0x80\n"; // Make the syscall
+    std::string exitConstraints = "r";
+
+    // Create the inline assembly call
+    llvm::InlineAsm* exitInlineAsm = llvm::InlineAsm::get(
+        exitAsmFuncType,
+        exitAsmString,
+        exitConstraints,
+        true // hasSideEffects
+    );
+
+    // Make the call
+    std::vector<llvm::Value*> exitArgs = {exitStatus};
+    builder.CreateCall(exitInlineAsm, exitArgs);
 
 #else
     std::cerr << "Error: Unsupported architecture\n";
