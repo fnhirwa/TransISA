@@ -4,6 +4,7 @@
 #include <iostream>
 #include <memory>
 #include <vector>
+#include "lexer/Lexer.h"
 #include "lexer/Token.h"
 #include "parser/AST.h"
 

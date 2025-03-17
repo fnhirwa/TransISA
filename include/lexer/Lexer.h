@@ -55,4 +55,5 @@ std::string_view readFileToStringView(
     const std::string& filePath,
     std::string& bufferStorage);
 bool isValidFileExtension(const std::string& filePath);
+std::string detectNumberType(const std::string& value);
 #endif // LEXER_H

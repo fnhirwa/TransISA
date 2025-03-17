@@ -80,12 +80,44 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
       consume(); // Consume label
     } else if (currentToken.type == TokenType::INSTRUCTION) {
       std::string opcode = consume().value;
-      std::vector<std::string> operands;
+      std::vector<std::unique_ptr<ASTNode>> operands;
+
       while (peek().type != TokenType::INSTRUCTION &&
              peek().type != TokenType::LABEL && peek().type != TokenType::END) {
-        operands.push_back(consume().value);
+        Token operandToken = consume();
+        std::string isNumber = detectNumberType(operandToken.value);
+        if (operandToken.type == TokenType::REGISTER) {
+          operands.push_back(
+              std::make_unique<RegisterNode>(operandToken.value));
+        } else if (isNumber == "Decimal") {
+          operands.push_back(std::make_unique<IntLiteralNode>(
+              std::stoi(operandToken.value, nullptr, 10)));
+        } else if (isNumber == "Hexadecimal") {
+          operands.push_back(std::make_unique<IntLiteralNode>(
+              std::stoi(operandToken.value, nullptr, 16)));
+        } else if (operandToken.type == TokenType::STRING) {
+          operands.push_back(std::make_unique<StringNode>(operandToken.value));
+        } else if (operandToken.type == TokenType::COMMA) {
+          continue; // Skip commas
+        } else if (operandToken.type == TokenType::L_BRACKET) {
+          // we have indirect memory access
+          std::string base =
+              consume().value; // base register or memory location
+          std::string offset = "";
+          bool isIndirect = true;
+          if (peek().value == "+") {
+            consume(); // consume '+'
+            offset = consume().value; // offset
+          }
+          consume(); // consume ']'
+          operands.push_back(
+              std::make_unique<MemoryNode>(base, offset, isIndirect));
+        } else {
+          consume();
+        }
       }
-      auto instr = std::make_unique<InstructionNode>(opcode, operands);
+      auto instr =
+          std::make_unique<InstructionNode>(opcode, std::move(operands));
       basicBlock->addBasicBlock(std::move(instr));
     } else {
       consume();

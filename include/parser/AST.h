@@ -106,16 +106,15 @@ class BasicBlockNode : public ASTNode {
 class InstructionNode : public ASTNode {
  public:
   std::string opcode;
-  std::vector<std::string> operands;
-  InstructionNode(
-      const std::string& opcode,
-      const std::vector<std::string>& operands)
-      : opcode(opcode), operands(operands) {}
+  std::vector<std::unique_ptr<ASTNode>> operands;
+  InstructionNode(std::string op, std::vector<std::unique_ptr<ASTNode>> ops)
+      : opcode(std::move(op)), operands(std::move(ops)) {}
+
   void print(int indent = 0) const override {
     printIndent(indent);
-    std::cout << "Instruction: " << opcode << " ";
+    std::cout << "Instruction: " << opcode << "\n";
     for (const auto& operand : operands) {
-      std::cout << operand << " ";
+      operand->print(indent + 1);
     }
     std::cout << "\n";
   }
@@ -130,6 +129,32 @@ class RegisterNode : public ASTNode {
   void print(int indent = 0) const override {
     printIndent(indent);
     std::cout << "Register: " << registerName << "\n";
+  }
+};
+
+class MemoryNode : public ASTNode {
+ public:
+  std::string base;
+  std::string offset;
+  bool isIndirect;
+
+  explicit MemoryNode(
+      std::string base,
+      std::string offset = "",
+      bool isIndirect = false)
+      : base(std::move(base)), offset(std::move(offset)),
+        isIndirect(isIndirect) {}
+
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    if (isIndirect) {
+      std::cout << "Memory: [" << base;
+      if (!offset.empty())
+        std::cout << " + " << offset;
+      std::cout << "]\n";
+    } else {
+      std::cout << "Memory: " << base << "\n";
+    }
   }
 };
 
