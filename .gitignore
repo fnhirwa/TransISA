@@ -34,6 +34,3 @@
 # build
 build/
 .vscode/
-# README files
-README
-README.*
