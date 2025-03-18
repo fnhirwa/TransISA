@@ -244,8 +244,57 @@ void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
 
     llvm::Value* destPtr = namedValues[destReg->registerName];
     builder.CreateStore(srcValue, destPtr);
+  } else if (destType == "mem") {
+    auto* destMem = dynamic_cast<MemoryNode*>(destNode);
+    if (!destMem) {
+      std::cerr << "Error: Invalid memory operand\n";
+      return;
+    }
+    llvm::Value* baseAddr = nullptr;
+    llvm::Value* offsetVal = nullptr;
+    if (!destMem->base.empty()) {
+      // this is in global scope we can initialize it
+      if (namedValues.find(destMem->base) == namedValues.end()) {
+        std::cerr << "Warning: Base register '" << destMem->base
+                  << "' not allocated. Allocating now.\n";
+        // Create a global variable in LLVM if missing
+        llvm::GlobalVariable* globalVar = new llvm::GlobalVariable(
+            module,
+            llvm::Type::getInt32Ty(context),
+            false,
+            llvm::GlobalValue::ExternalLinkage,
+            llvm::ConstantInt::get(context, llvm::APInt(32, 0)),
+            destMem->base);
+
+        namedValues[destMem->base] = globalVar; // Register it globally
+      }
+      baseAddr = namedValues[destMem->base];
+      baseAddr = builder.CreateLoad(
+          llvm::Type::getInt32Ty(context), baseAddr, destMem->base);
+    }
+    if (!destMem->offset.empty()) {
+      try {
+        int offsetInt = std::stoi(destMem->offset);
+        offsetVal =
+            llvm::ConstantInt::get(context, llvm::APInt(32, offsetInt, true));
+      } catch (const std::exception& e) {
+        std::cerr << "Error: Invalid memory offset '" << destMem->offset
+                  << "'\n";
+        return;
+      }
+    }
+    llvm::Value* memAddr = baseAddr;
+    if (offsetVal) {
+      memAddr = builder.CreateAdd(baseAddr, offsetVal, "mem_addr");
+    }
+    llvm::Type* i32PtrType =
+        llvm::PointerType::get(llvm::Type::getInt32Ty(context), 0);
+    llvm::Value* ptr = builder.CreateIntToPtr(memAddr, i32PtrType, "ptr_cast");
+    builder.CreateStore(srcValue, ptr);
   } else {
-    std::cerr << "Error: Destination operand must be a register\n";
+    std::cerr << "Error: Destination operand must be a register not of type: "
+              << destType << "\n";
+    return;
   }
 }
 

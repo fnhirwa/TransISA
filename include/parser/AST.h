@@ -191,4 +191,44 @@ class SyscallNode : public ASTNode {
   }
 };
 
+// Label Node
+class LabelNode : public ASTNode {
+ public:
+  std::string label;
+  explicit LabelNode(const std::string& label) : label(label) {}
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "Label: " << label << "\n";
+  }
+};
+
+// Global Node
+class GlobalNode : public ASTNode {
+ public:
+  std::string global;
+  explicit GlobalNode(const std::string& global) : global(global) {}
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "Global: " << global << "\n";
+  }
+};
+
+// BSS Node
+class BssNode : public ASTNode {
+ public:
+  std::string varName;
+  std::string directiveName;
+  const std::string size;
+  explicit BssNode(
+      const std::string& varName,
+      const std::string& directiveName,
+      const std::string& size)
+      : varName(varName), directiveName(directiveName), size(size) {}
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "BSS: " << varName << " " << directiveName << " " << size
+              << "\n";
+  }
+};
+
 #endif // AST_H

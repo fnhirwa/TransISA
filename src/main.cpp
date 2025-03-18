@@ -10,7 +10,7 @@ using namespace std;
 void testParser(std::string_view source) {
   Lexer lexer(source);
   std::vector<Token> tokens = lexer.tokenize();
-  // {TokenType::LABEL, value, "LABEL", line, column};
+  //{TokenType::LABEL, value, "LABEL", line, column};
   for (const Token& token : tokens) {
     std::cout << token.value << " " << token.type_name << " " << token.line
               << " " << token.column << std::endl;
@@ -26,8 +26,14 @@ void testParser(std::string_view source) {
 void testIRGen(std::string_view source) {
   Lexer lexer(source);
   std::vector<Token> tokens = lexer.tokenize();
+  // for (const Token& token : tokens) {
+  //   std::cout << token.value << " " << token.type_name << " " << token.line
+  //             << " " << token.column << std::endl;
+  // }
   Parser parser(tokens);
   std::unique_ptr<ASTNode> root = parser.parse();
+  std::cout << "Generated AST:\n";
+  // root->print();
   LLVMIRGen irGen;
   llvm::Module* module = irGen.generateIR(root);
   module->print(llvm::errs(), nullptr);

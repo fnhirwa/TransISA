@@ -33,6 +33,7 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert("lea", TokenType::INSTRUCTION);
   keywordTrie->insert("syscall", TokenType::INSTRUCTION);
   keywordTrie->insert("int", TokenType::INSTRUCTION);
+  keywordTrie->insert("xor", TokenType::INSTRUCTION);
 
   // General-purpose registers (32-bit)
   keywordTrie->insert("eax", TokenType::REGISTER);
@@ -114,7 +115,6 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert(".intel_syntax", TokenType::DIRECTIVE);
   keywordTrie->insert(".type", TokenType::DIRECTIVE);
   keywordTrie->insert(".globl", TokenType::DIRECTIVE);
-  keywordTrie->insert(".rodata", TokenType::DIRECTIVE);
   keywordTrie->insert(".cfi_startproc", TokenType::DIRECTIVE);
   keywordTrie->insert(".cfi_def_cfa_offset", TokenType::DIRECTIVE);
   keywordTrie->insert(".cfi_endproc", TokenType::DIRECTIVE);
@@ -129,7 +129,6 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert(".short", TokenType::DIRECTIVE);
   keywordTrie->insert(".quad", TokenType::DIRECTIVE);
   keywordTrie->insert(".zero", TokenType::DIRECTIVE);
-  keywordTrie->insert(".bss", TokenType::DIRECTIVE);
   keywordTrie->insert(".asciz", TokenType::DIRECTIVE);
   keywordTrie->insert(".note", TokenType::DIRECTIVE);
   keywordTrie->insert(".GNU-stack", TokenType::DIRECTIVE);
@@ -137,6 +136,11 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert(".note.gnu.property", TokenType::DIRECTIVE);
   keywordTrie->insert(".string", TokenType::DIRECTIVE);
   keywordTrie->insert("global", TokenType::DIRECTIVE);
+  keywordTrie->insert("resb", TokenType::DIRECTIVE);
+  keywordTrie->insert("resw", TokenType::DIRECTIVE);
+  keywordTrie->insert("resd", TokenType::DIRECTIVE);
+  keywordTrie->insert("resq", TokenType::DIRECTIVE);
+  keywordTrie->insert("rest", TokenType::DIRECTIVE);
 
   // Segment Directives
   keywordTrie->insert(".text", TokenType::SEGMENT_DIRECTIVE);

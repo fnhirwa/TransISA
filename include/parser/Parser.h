@@ -25,7 +25,11 @@ class Parser {
 
  private:
   void parseDataSection(std::unique_ptr<RootNode>& root);
+  void parseBssSection(std::unique_ptr<RootNode>& root);
   void parseTextSection(std::unique_ptr<RootNode>& root);
+  void parseInstruction(std::unique_ptr<RootNode>& root);
+  void parseLabel(std::unique_ptr<RootNode>& root, const Token& token);
+  void parseGlobal(std::unique_ptr<RootNode>& root);
 };
 
 #endif // PARSER_H
