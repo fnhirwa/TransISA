@@ -2,11 +2,13 @@
 #include <cctype>
 #include <iostream>
 #include "lexer/Lexer.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm_ir/LLVMIRGenerator.h"
 #include "parser/Parser.h"
 
 using namespace std;
 
-TEST(ParserTest, CreateAndWriteTempFile) {
+TEST(IRGenTest, CreateAndWriteTempFile) {
   string test_example1 =
       ".section .data\nmsg db 'Hello World!', 0Ah\nSECTION .text\n global  "
       "_start\n_start:\n mov edx, 13\nlea ecx, [msg]\nmov ebx, 1\nmov eax, "
@@ -66,10 +68,11 @@ TEST(ParserTest, CreateAndWriteTempFile) {
 
   Parser parser(tokens);
   std::unique_ptr<ASTNode> ast = parser.parse();
-  // check if the AST is not null
-  ASSERT_TRUE(ast != nullptr) << "AST is null";
-  // check if the AST is not empty
-  ASSERT_TRUE(ast->children.size() > 0) << "AST is empty";
+
+  LLVMIRGen irGen;
+  llvm::Module* module = irGen.generateIR(ast);
+  // check if the llvm module was created
+  ASSERT_TRUE(module != nullptr) << "LLVM Module is null";
 }
 
 int main(int argc, char** argv) {

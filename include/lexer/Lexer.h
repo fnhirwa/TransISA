@@ -34,12 +34,17 @@ class Lexer {
   void skipWhitespace();
   void skipComment();
   Token readInstruction();
-  Token readKeyword();
   Token readRegister();
   Token readImmediate();
-  Token readPunctuation();
   Token readLabel();
+  Token readIdentifier();
   Token readDirective();
+  Token readValue();
+  Token readComma();
+  Token readColon();
+  Token readLeftBracket();
+  Token readRightBracket();
+  Token readPunctuation();
   Token readString();
 };
 
@@ -50,4 +55,5 @@ std::string_view readFileToStringView(
     const std::string& filePath,
     std::string& bufferStorage);
 bool isValidFileExtension(const std::string& filePath);
+std::string detectNumberType(const std::string& value);
 #endif // LEXER_H

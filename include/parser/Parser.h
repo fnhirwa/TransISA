@@ -1,30 +1,35 @@
 #ifndef PARSER_H
 #define PARSER_H
 
+#include <iostream>
+#include <memory>
 #include <vector>
+#include "lexer/Lexer.h"
 #include "lexer/Token.h"
 #include "parser/AST.h"
 
 // The Parser class is used to parse a sequence of tokens into an abstract
 // syntax tree (AST). The parse method reads the tokens and constructs an AST
 // based on the grammar rules of the language.
-
 class Parser {
- public:
-  explicit Parser(const std::vector<Token>& tokens);
-  ASTNode* parse();
-
  private:
   std::vector<Token> tokens;
-  size_t position = 0;
+  size_t index;
 
   Token peek();
-  Token advance();
-  bool match(TokenType type);
-  ASTNode* parseInstruction();
-  ASTNode* parseRegister();
-  ASTNode* parseImmediate();
-  ASTNode* parseOperand();
+  Token consume();
+
+ public:
+  explicit Parser(std::vector<Token> tokens);
+  std::unique_ptr<RootNode> parse();
+
+ private:
+  void parseDataSection(std::unique_ptr<RootNode>& root);
+  void parseBssSection(std::unique_ptr<RootNode>& root);
+  void parseTextSection(std::unique_ptr<RootNode>& root);
+  void parseInstruction(std::unique_ptr<RootNode>& root);
+  void parseLabel(std::unique_ptr<RootNode>& root, const Token& token);
+  void parseGlobal(std::unique_ptr<RootNode>& root);
 };
 
 #endif // PARSER_H

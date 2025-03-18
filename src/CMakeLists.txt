@@ -15,7 +15,6 @@ llvm_map_components_to_libnames(LLVM_LIBS support core irreader mc scalaropts)
 include_directories(${CMAKE_SOURCE_DIR}/include)
 
 # subdirectories
-add_subdirectory(ir)
 add_subdirectory(lexer)
 add_subdirectory(llvm_ir)
 add_subdirectory(optimizer)
