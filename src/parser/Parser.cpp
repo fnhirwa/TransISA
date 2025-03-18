@@ -70,7 +70,9 @@ std::unique_ptr<RootNode> Parser::parse() {
         currentToken.type == TokenType::INSTRUCTION) {
       if (!inTextSection) {
         inTextSection = true;
-        std::cerr << "Warning: Implicit .text section assumed\n";
+        std::cerr << "Warning: Implicit .text section assumed: " << "At line "
+                  << currentToken.line << ", column " << currentToken.column
+                  << "\n";
         parseTextSection(root);
       } else {
         consume(); // Already inside .text, just continue parsing
@@ -163,13 +165,9 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
 
   while (index < tokens.size()) {
     Token currentToken = peek();
-    std::cerr << "Next token is: " << currentToken.value << " of type "
-              << currentToken.type_name << " at line " << currentToken.line
-              << "\n";
 
     // **Check for a new section and exit immediately**
     if (currentToken.type == TokenType::SEGMENT_DIRECTIVE) {
-      std::cerr << "Detected new segment: " << currentToken.value << "\n";
       break; // Exit parsing the .text section
     }
 
@@ -223,6 +221,13 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
           consume(); // consume ']'
           operands.push_back(
               std::make_unique<MemoryNode>(base, offset, isIndirect));
+        } else if (operandToken.type == TokenType::IDENTIFIER) // treate is as a
+                                                               // memory address
+                                                               // of some global
+                                                               // variable
+        {
+          operands.push_back(
+              std::make_unique<MemoryNode>(operandToken.value, "", false));
         } else {
           consume(); // Skip unknown tokens
         }
