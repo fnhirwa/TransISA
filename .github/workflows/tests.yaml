@@ -76,4 +76,8 @@ jobs:
           nm -g build/src/parser/libparser_lib.a || echo "No symbols in libparser_lib.a"
 
       - name: Run Tests
-        run: ./build/tests/test_lexer
+        run: |
+          # move to the build directory
+          cd build
+          # run the tests
+          make run_all_tests
