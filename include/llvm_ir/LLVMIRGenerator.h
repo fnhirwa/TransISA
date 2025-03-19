@@ -81,5 +81,9 @@ class LLVMIRGen {
   void handleSyscallInstructionNode(InstructionNode* node);
   void handleIntInstructionNode(InstructionNode* node);
   void handleRetInstructionNode(InstructionNode* node);
+
+  // some memory related functions
+  llvm::Value* handleDestinationMemory(MemoryNode* destMem);
+  llvm::Value* handleSourceMemory(MemoryNode* srcMem);
 };
 #endif // LLVMIRGENERATOR_H

@@ -3,6 +3,8 @@
 #include "llvm/IR/InlineAsm.h"
 #include "llvm/IR/Verifier.h"
 
+// This module object is used to store all the IR generated
+// It is a container for all the IR instructions
 llvm::Module* LLVMIRGen::generateIR(std::unique_ptr<ASTNode>& root) {
   for (const auto& child : root->children) {
     if (auto* var = dynamic_cast<GlobalVariableNode*>(child.get())) {
@@ -64,6 +66,7 @@ void LLVMIRGen::visitBasicBlockNode(BasicBlockNode* node) {
   }
 }
 
+// this helps to understand the type of operand
 std::string check_operandType(ASTNode* operand) {
   if (auto* reg = dynamic_cast<RegisterNode*>(operand)) {
     return "reg";
@@ -117,8 +120,38 @@ void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
     return;
   }
 
-  llvm::Value* rhs = nullptr;
+  // Get the type of the left operand as it can be either a
+  // register or memory location
+  std::string lhsType = check_operandType(lhsNode);
   std::string rhsType = check_operandType(rhsNode);
+
+  if (lhsType == "reg") {
+    auto* lhsReg = dynamic_cast<RegisterNode*>(lhsNode);
+    if (!lhsReg) {
+      std::cerr << "Error: Left operand must be a register.\n";
+      return;
+    }
+
+    llvm::Value* lhs = namedValues[lhsReg->registerName];
+    if (!lhs) {
+      std::cerr << "Error: Register " << lhsReg->registerName
+                << " is not initialized.\n";
+      return;
+    }
+  } else if (lhsType == "mem") {
+    auto* lhsMem = dynamic_cast<MemoryNode*>(lhsNode);
+    if (!lhsMem) {
+      std::cerr << "Error: Invalid memory operand\n";
+      return;
+    }
+    llvm::Value* ptr = handleDestinationMemory(lhsMem);
+    llvm::Value* lhs =
+        builder.CreateLoad(llvm::Type::getInt32Ty(context), ptr, "mem_load");
+  } else {
+    std::cerr << "Error: Invalid left operand for binary operation.\n";
+    return;
+  }
+  llvm::Value* rhs = nullptr;
 
   if (rhsType == "int") {
     auto* intLit = dynamic_cast<IntLiteralNode*>(rhsNode);
@@ -250,46 +283,7 @@ void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
       std::cerr << "Error: Invalid memory operand\n";
       return;
     }
-    llvm::Value* baseAddr = nullptr;
-    llvm::Value* offsetVal = nullptr;
-    if (!destMem->base.empty()) {
-      // this is in global scope we can initialize it
-      if (namedValues.find(destMem->base) == namedValues.end()) {
-        std::cerr << "Warning: Base register '" << destMem->base
-                  << "' not allocated. Allocating now.\n";
-        // Create a global variable in LLVM if missing
-        llvm::GlobalVariable* globalVar = new llvm::GlobalVariable(
-            module,
-            llvm::Type::getInt32Ty(context),
-            false,
-            llvm::GlobalValue::ExternalLinkage,
-            llvm::ConstantInt::get(context, llvm::APInt(32, 0)),
-            destMem->base);
-
-        namedValues[destMem->base] = globalVar; // Register it globally
-      }
-      baseAddr = namedValues[destMem->base];
-      baseAddr = builder.CreateLoad(
-          llvm::Type::getInt32Ty(context), baseAddr, destMem->base);
-    }
-    if (!destMem->offset.empty()) {
-      try {
-        int offsetInt = std::stoi(destMem->offset);
-        offsetVal =
-            llvm::ConstantInt::get(context, llvm::APInt(32, offsetInt, true));
-      } catch (const std::exception& e) {
-        std::cerr << "Error: Invalid memory offset '" << destMem->offset
-                  << "'\n";
-        return;
-      }
-    }
-    llvm::Value* memAddr = baseAddr;
-    if (offsetVal) {
-      memAddr = builder.CreateAdd(baseAddr, offsetVal, "mem_addr");
-    }
-    llvm::Type* i32PtrType =
-        llvm::PointerType::get(llvm::Type::getInt32Ty(context), 0);
-    llvm::Value* ptr = builder.CreateIntToPtr(memAddr, i32PtrType, "ptr_cast");
+    llvm::Value* ptr = handleDestinationMemory(destMem);
     builder.CreateStore(srcValue, ptr);
   } else {
     std::cerr << "Error: Destination operand must be a register not of type: "
@@ -572,3 +566,47 @@ void LLVMIRGen::handleIntInstructionNode(InstructionNode* node) {
 void LLVMIRGen::handleSyscallInstructionNode(InstructionNode* node) {}
 
 void LLVMIRGen::handleRetInstructionNode(InstructionNode* node) {}
+
+llvm::Value* LLVMIRGen::handleDestinationMemory(MemoryNode* destMem) {
+  llvm::Value* baseAddr = nullptr;
+  llvm::Value* offsetVal = nullptr;
+  if (!destMem->base.empty()) {
+    // check if it is a predefined global variable
+    // and create it if not found, for some cases you can find
+    // it in the .bss section which defines the uninitialized data section
+    if (namedValues.find(destMem->base) == namedValues.end()) {
+      std::cerr << "Warning: Base register '" << destMem->base
+                << "' not allocated. Allocating now.\n";
+      // initialize the global variable
+      llvm::GlobalVariable* globalVar = new llvm::GlobalVariable(
+          module,
+          llvm::Type::getInt32Ty(context),
+          false,
+          llvm::GlobalValue::ExternalLinkage,
+          llvm::ConstantInt::get(context, llvm::APInt(32, 0)),
+          destMem->base);
+      namedValues[destMem->base] = globalVar; // registered globally
+    }
+    baseAddr = namedValues[destMem->base];
+    baseAddr = builder.CreateLoad(
+        llvm::Type::getInt32Ty(context), baseAddr, destMem->base);
+  }
+  if (!destMem->offset.empty()) {
+    try {
+      int offsetInt = std::stoi(destMem->offset);
+      offsetVal =
+          llvm::ConstantInt::get(context, llvm::APInt(32, offsetInt, true));
+    } catch (const std::exception& e) {
+      std::cerr << "Error: Invalid memory offset '" << destMem->offset << "'\n";
+      return nullptr;
+    }
+  }
+  llvm::Value* memAddr = baseAddr;
+  if (offsetVal) {
+    memAddr = builder.CreateAdd(baseAddr, offsetVal, "mem_addr");
+  }
+  llvm::Type* i32PtrType =
+      llvm::PointerType::get(llvm::Type::getInt32Ty(context), 0);
+  llvm::Value* ptr = builder.CreateIntToPtr(memAddr, i32PtrType, "ptr_cast");
+  return ptr;
+}
