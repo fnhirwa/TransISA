@@ -15,7 +15,7 @@ TEST(LexerTest, CreateAndWriteTempFile) {
       {TokenType::SEGMENT_DIRECTIVE, ".data", "SEGMENT_DIRECTIVE", 1, 15},
       {TokenType::IDENTIFIER, "msg", "IDENTIFIER", 2, 4},
       {TokenType::DATA_VALUE, "db", "DATA_VALUE", 2, 7},
-      {TokenType::STRING, "Hello World!", "STRING", 2, 22},
+      {TokenType::STRING, "Hello World!\n", "STRING", 2, 22},
       {TokenType::COMMA, ",", "COMMA", 2, 23},
       {TokenType::HEX_IMMEDIATE, "0ah", "HEX_IMMEDIATE", 2, 27},
       {TokenType::SEGMENT_DIRECTIVE, "section", "SEGMENT_DIRECTIVE", 3, 8},

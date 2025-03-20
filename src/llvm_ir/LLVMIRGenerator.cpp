@@ -151,6 +151,11 @@ void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
     std::cerr << "Error: Invalid left operand for binary operation.\n";
     return;
   }
+  // Ensure lhs is integer
+  if (lhs->getType()->isPointerTy()) {
+    lhs =
+        builder.CreatePtrToInt(lhs, llvm::Type::getInt32Ty(context), "lhs_int");
+  }
   llvm::Value* rhs = nullptr;
 
   if (rhsType == "int") {
@@ -164,6 +169,11 @@ void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
                 << " is not initialized.\n";
       return;
     }
+    // Ensure rhs is an integer
+    if (rhs->getType()->isPointerTy()) {
+      rhs = builder.CreatePtrToInt(
+          rhs, llvm::Type::getInt32Ty(context), "rhs_int");
+    }
   } else {
     std::cerr
         << "Error: Unsupported right operand type for binary operation.\n";
@@ -176,7 +186,6 @@ void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
     std::cerr << "Error: Unsupported binary opcode '" << node->opcode << "'\n";
     return;
   }
-
   // Generate the LLVM IR instruction
   llvm::Value* result = it->second(builder, lhs, rhs);
 
@@ -276,6 +285,11 @@ void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
     }
 
     llvm::Value* destPtr = namedValues[destReg->registerName];
+    // ensure that the destination is a pointer
+    if (!destPtr->getType()->isPointerTy()) {
+      destPtr = builder.CreateAlloca(
+          llvm::Type::getInt32Ty(context), nullptr, destReg->registerName);
+    }
     builder.CreateStore(srcValue, destPtr);
   } else if (destType == "mem") {
     auto* destMem = dynamic_cast<MemoryNode*>(destNode);

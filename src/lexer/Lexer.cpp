@@ -491,8 +491,8 @@ Token Lexer::readString() {
   // the string is ended with a '"'
   // so we need to add it to the value
   value += advance();
-  // remove the first and last character
-  value = value.substr(1, value.size() - 2);
+  // remove the first and last character and add new line as a terminator
+  value = value.substr(1, value.size() - 2) + '\n';
   return {TokenType::STRING, value, "STRING", line, column};
 }
 
