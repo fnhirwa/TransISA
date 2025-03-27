@@ -352,7 +352,8 @@ Token Lexer::readLabel() {
   if (peek() == '.' || peek() == '_') {
     value += advance();
   }
-  while (position < source.size() && isalnum(source[position])) {
+  while (position < source.size() &&
+         (isalnum(source[position]) || source[position] == '_')) {
     value += advance();
   }
   if (peek() == ':') {
