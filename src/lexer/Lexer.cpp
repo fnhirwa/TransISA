@@ -34,6 +34,27 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert("syscall", TokenType::INSTRUCTION);
   keywordTrie->insert("int", TokenType::INSTRUCTION);
   keywordTrie->insert("xor", TokenType::INSTRUCTION);
+  // 8-bit registers (lower parts)
+  keywordTrie->insert("al", TokenType::REGISTER);
+  keywordTrie->insert("bl", TokenType::REGISTER);
+  keywordTrie->insert("cl", TokenType::REGISTER);
+  keywordTrie->insert("dl", TokenType::REGISTER);
+
+  // 8-bit registers (high parts, 16/32-bit only)
+  keywordTrie->insert("ah", TokenType::REGISTER);
+  keywordTrie->insert("bh", TokenType::REGISTER);
+  keywordTrie->insert("ch", TokenType::REGISTER);
+  keywordTrie->insert("dh", TokenType::REGISTER);
+
+  // 16-bit registers
+  keywordTrie->insert("ax", TokenType::REGISTER);
+  keywordTrie->insert("bx", TokenType::REGISTER);
+  keywordTrie->insert("cx", TokenType::REGISTER);
+  keywordTrie->insert("dx", TokenType::REGISTER);
+  keywordTrie->insert("si", TokenType::REGISTER); // Lower 16 of esi
+  keywordTrie->insert("di", TokenType::REGISTER); // Lower 16 of edi
+  keywordTrie->insert("bp", TokenType::REGISTER); // Lower 16 of ebp
+  keywordTrie->insert("sp", TokenType::REGISTER); // Lower 16 of esp
 
   // General-purpose registers (32-bit)
   keywordTrie->insert("eax", TokenType::REGISTER);
@@ -62,6 +83,33 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert("r13", TokenType::REGISTER);
   keywordTrie->insert("r14", TokenType::REGISTER);
   keywordTrie->insert("r15", TokenType::REGISTER);
+  keywordTrie->insert("r8b", TokenType::REGISTER);
+  // 64-bit additional 8-bit registers
+  keywordTrie->insert("r9b", TokenType::REGISTER);
+  keywordTrie->insert("r10b", TokenType::REGISTER);
+  keywordTrie->insert("r11b", TokenType::REGISTER);
+  keywordTrie->insert("r12b", TokenType::REGISTER);
+  keywordTrie->insert("r13b", TokenType::REGISTER);
+  keywordTrie->insert("r14b", TokenType::REGISTER);
+  keywordTrie->insert("r15b", TokenType::REGISTER);
+  // 64-bit additional 16-bit registers
+  keywordTrie->insert("r8w", TokenType::REGISTER);
+  keywordTrie->insert("r9w", TokenType::REGISTER);
+  keywordTrie->insert("r10w", TokenType::REGISTER);
+  keywordTrie->insert("r11w", TokenType::REGISTER);
+  keywordTrie->insert("r12w", TokenType::REGISTER);
+  keywordTrie->insert("r13w", TokenType::REGISTER);
+  keywordTrie->insert("r14w", TokenType::REGISTER);
+  keywordTrie->insert("r15w", TokenType::REGISTER);
+  // 64-bit additional 32-bit registers
+  keywordTrie->insert("r8d", TokenType::REGISTER);
+  keywordTrie->insert("r9d", TokenType::REGISTER);
+  keywordTrie->insert("r10d", TokenType::REGISTER);
+  keywordTrie->insert("r11d", TokenType::REGISTER);
+  keywordTrie->insert("r12d", TokenType::REGISTER);
+  keywordTrie->insert("r13d", TokenType::REGISTER);
+  keywordTrie->insert("r14d", TokenType::REGISTER);
+  keywordTrie->insert("r15d", TokenType::REGISTER);
 
   // Segment registers
   keywordTrie->insert("cs", TokenType::REGISTER);
