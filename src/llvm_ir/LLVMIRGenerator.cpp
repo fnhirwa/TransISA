@@ -31,6 +31,11 @@ void LLVMIRGen::visitGlobalVariableNode(GlobalVariableNode* node) {
   llvm::Constant* init =
       llvm::ConstantDataArray::getString(context, node->value, true);
   globalVar->setInitializer(init);
+
+  // add global vatiable to namedValues
+  llvm::Value* globalPtr =
+      builder.CreateConstGEP2_32(arrayType, globalVar, 0, 0, "global_ptr");
+  namedValues[node->name] = globalPtr;
 }
 
 void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
@@ -119,9 +124,20 @@ void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
 
   llvm::Value* lhs = namedValues[lhsReg->registerName];
   if (!lhs) {
+    // Check if the register is initialized
+    // some system calls like xor edi, edi don't
+    // initialize the register
     std::cerr << "Error: Register " << lhsReg->registerName
-              << " is not initialized.\n";
-    return;
+              << " is not initialized. " << "Initializing to 0.\n";
+    lhs = llvm::ConstantInt::get(context, llvm::APInt(32, 0, true));
+    llvm::Value* allocaInst = builder.CreateAlloca(
+        llvm::Type::getInt32Ty(context), nullptr, lhsReg->registerName);
+    builder.CreateStore(lhs, allocaInst);
+    namedValues[lhsReg->registerName] = allocaInst;
+    lhs = builder.CreateLoad(
+        llvm::Type::getInt32Ty(context),
+        allocaInst,
+        "load_" + lhsReg->registerName);
   }
 
   // Get the type of the left operand as it can be either a
@@ -137,11 +153,6 @@ void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
     }
 
     llvm::Value* lhs = namedValues[lhsReg->registerName];
-    if (!lhs) {
-      std::cerr << "Error: Register " << lhsReg->registerName
-                << " is not initialized.\n";
-      return;
-    }
   } else if (lhsType == "mem") {
     auto* lhsMem = dynamic_cast<MemoryNode*>(lhsNode);
     if (!lhsMem) {
