@@ -165,7 +165,6 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
 
   while (index < tokens.size()) {
     Token currentToken = peek();
-
     // **Check for a new section and exit immediately**
     if (currentToken.type == TokenType::SEGMENT_DIRECTIVE) {
       break; // Exit parsing the .text section
@@ -233,7 +232,7 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
           operands.push_back(
               std::make_unique<MemoryNode>(operandToken.value, "", false));
         } else {
-          consume(); // Skip unknown tokens
+          continue; // Skip unknown tokens
         }
       }
 
@@ -245,6 +244,20 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
 
     else if (currentToken.type == TokenType::END) {
       break; // End of tokens
+    } else if (currentToken.type == TokenType::DIRECTIVE) {
+      if (currentToken.value == "global") {
+        consume(); // Consume 'global' keyword
+        parseGlobal(root);
+      } else if (
+          currentToken.value == ".file" || currentToken.value == ".ident") {
+        consume(); // Consume file or ident directive
+      } else if (
+          currentToken.value == ".type" || currentToken.value == ".size") {
+        consume(); // Consume type or size directive
+      } else {
+        std::cerr << "Error: Unknown directive: " << currentToken.value << "\n";
+        consume();
+      }
     }
 
     else {
