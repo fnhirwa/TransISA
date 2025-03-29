@@ -34,10 +34,10 @@ void testIRGen(std::string_view source) {
   std::unique_ptr<ASTNode> root = parser.parse();
   std::cout << "Generated AST:\n";
   root->print();
-  LLVMIRGen irGen;
-  llvm::Module* module = irGen.generateIR(root);
-  cout << "Generated LLVM IR:\n";
-  module->print(llvm::errs(), nullptr);
+  // LLVMIRGen irGen;
+  // llvm::Module* module = irGen.generateIR(root);
+  // cout << "Generated LLVM IR:\n";
+  // module->print(llvm::errs(), nullptr);
 }
 
 int main(int argc, char* argv[]) {

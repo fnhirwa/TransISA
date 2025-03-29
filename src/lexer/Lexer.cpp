@@ -18,22 +18,118 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert("mul", TokenType::INSTRUCTION);
   keywordTrie->insert("div", TokenType::INSTRUCTION);
   keywordTrie->insert("mod", TokenType::INSTRUCTION);
-  keywordTrie->insert("push", TokenType::INSTRUCTION);
-  keywordTrie->insert("pop", TokenType::INSTRUCTION);
-  keywordTrie->insert("jmp", TokenType::INSTRUCTION);
-  keywordTrie->insert("je", TokenType::INSTRUCTION);
-  keywordTrie->insert("jne", TokenType::INSTRUCTION);
-  keywordTrie->insert("jg", TokenType::INSTRUCTION);
-  keywordTrie->insert("jge", TokenType::INSTRUCTION);
-  keywordTrie->insert("jl", TokenType::INSTRUCTION);
-  keywordTrie->insert("jle", TokenType::INSTRUCTION);
-  keywordTrie->insert("call", TokenType::INSTRUCTION);
-  keywordTrie->insert("ret", TokenType::INSTRUCTION);
   keywordTrie->insert("end", TokenType::INSTRUCTION);
   keywordTrie->insert("lea", TokenType::INSTRUCTION);
   keywordTrie->insert("syscall", TokenType::INSTRUCTION);
   keywordTrie->insert("int", TokenType::INSTRUCTION);
-  keywordTrie->insert("xor", TokenType::INSTRUCTION);
+  keywordTrie->insert("cmp", TokenType::INSTRUCTION);
+  // FPU
+  keywordTrie->insert("fadd", TokenType::INSTRUCTION); // Floating add
+  keywordTrie->insert("fsub", TokenType::INSTRUCTION); // Floating subtract
+  keywordTrie->insert("fmul", TokenType::INSTRUCTION); // Floating multiply
+  keywordTrie->insert("fdiv", TokenType::INSTRUCTION); // Floating divide
+  keywordTrie->insert("fld", TokenType::INSTRUCTION); // Load floating value
+  keywordTrie->insert("fst", TokenType::INSTRUCTION); // Store floating value
+  keywordTrie->insert("fstp", TokenType::INSTRUCTION); // Store and pop
+  keywordTrie->insert("fcom", TokenType::INSTRUCTION); // Floating compare
+  // some useful  instructions
+  keywordTrie->insert("nop", TokenType::INSTRUCTION); // No operation
+  keywordTrie->insert("hlt", TokenType::INSTRUCTION); // Halt CPU
+  keywordTrie->insert("cli", TokenType::INSTRUCTION); // Clear interrupts
+  keywordTrie->insert("sti", TokenType::INSTRUCTION); // Enable interrupts
+  keywordTrie->insert("cmc", TokenType::INSTRUCTION); // Complement carry flag
+  keywordTrie->insert(
+      "cld", TokenType::INSTRUCTION); // Clear direction flag (for string ops)
+  keywordTrie->insert("std", TokenType::INSTRUCTION); // Set direction flag
+  keywordTrie->insert("enter", TokenType::INSTRUCTION); // Function prologue
+  keywordTrie->insert("leave", TokenType::INSTRUCTION); // Function epilogue
+  // rep-based instructions
+  keywordTrie->insert(
+      "movsb", TokenType::INSTRUCTION); // Move byte from [esi] to [edi]
+  keywordTrie->insert("movsw", TokenType::INSTRUCTION); // Move word
+  keywordTrie->insert("movsd", TokenType::INSTRUCTION); // Move dword
+  keywordTrie->insert("cmpsb", TokenType::INSTRUCTION); // Compare byte
+  keywordTrie->insert(
+      "lodsb", TokenType::INSTRUCTION); // Load byte from [esi] into al
+  keywordTrie->insert("stosb", TokenType::INSTRUCTION); // Store al into [edi]
+  keywordTrie->insert(
+      "scasb", TokenType::INSTRUCTION); // Scan string (compare al with [edi])
+  keywordTrie->insert(
+      "rep", TokenType::INSTRUCTION); // Repeat instruction (e.g., `rep movsb`)
+  keywordTrie->insert("repe", TokenType::INSTRUCTION); // Repeat while equal
+  keywordTrie->insert(
+      "repne", TokenType::INSTRUCTION); // Repeat while not equal
+  // Function call and return
+  keywordTrie->insert("call", TokenType::INSTRUCTION); // Call a function
+  keywordTrie->insert("ret", TokenType::INSTRUCTION); // Return from a function
+  keywordTrie->insert("iret", TokenType::INSTRUCTION); // Interrupt return
+  keywordTrie->insert("retn", TokenType::INSTRUCTION); // Near return (explicit)
+  keywordTrie->insert(
+      "retf", TokenType::INSTRUCTION); // Far return (segment change)
+  // Stack operations
+  keywordTrie->insert("push", TokenType::INSTRUCTION); // Push onto stack
+  keywordTrie->insert("pop", TokenType::INSTRUCTION); // Pop from stack
+  keywordTrie->insert(
+      "pusha",
+      TokenType::INSTRUCTION); // Push all general-purpose regs (16/32-bit)
+  keywordTrie->insert(
+      "popa",
+      TokenType::INSTRUCTION); // Pop all general-purpose regs (16/32-bit)
+  keywordTrie->insert("pushad", TokenType::INSTRUCTION); // Push all (32-bit)
+  keywordTrie->insert("popad", TokenType::INSTRUCTION); // Pop all (32-bit)
+  keywordTrie->insert("pushf", TokenType::INSTRUCTION); // Push flags register
+  keywordTrie->insert("popf", TokenType::INSTRUCTION); // Pop flags register
+
+  // Jump instructions
+  keywordTrie->insert("jmp", TokenType::INSTRUCTION); // Unconditional jump
+  keywordTrie->insert("je", TokenType::INSTRUCTION); // Jump if equal
+  keywordTrie->insert("jne", TokenType::INSTRUCTION); // Jump if not equal
+  keywordTrie->insert("jg", TokenType::INSTRUCTION); // Jump if greater
+  keywordTrie->insert(
+      "jge", TokenType::INSTRUCTION); // Jump if greater or equal
+  keywordTrie->insert("jl", TokenType::INSTRUCTION); // Jump if less
+  keywordTrie->insert("jle", TokenType::INSTRUCTION); // Jump if less or equal
+  // Equality/Zero-based jumps
+  keywordTrie->insert(
+      "jz", TokenType::INSTRUCTION); // Jump if zero (same as je)
+  keywordTrie->insert(
+      "jnz", TokenType::INSTRUCTION); // Jump if not zero (same as jne)
+
+  // Unsigned comparisons (for "above/below")
+  keywordTrie->insert(
+      "ja", TokenType::INSTRUCTION); // Jump if above (unsigned >)
+  keywordTrie->insert(
+      "jae", TokenType::INSTRUCTION); // Jump if above or equal (unsigned >=)
+  keywordTrie->insert(
+      "jb", TokenType::INSTRUCTION); // Jump if below (unsigned <)
+  keywordTrie->insert(
+      "jbe", TokenType::INSTRUCTION); // Jump if below or equal (unsigned <=)
+
+  keywordTrie->insert(
+      "loop", TokenType::INSTRUCTION); // Decrement ecx/rcx and jump if not zero
+  keywordTrie->insert(
+      "loope", TokenType::INSTRUCTION); // Loop while equal (ZF=1)
+  keywordTrie->insert(
+      "loopne", TokenType::INSTRUCTION); // Loop while not equal (ZF=0)
+
+  // Bitwise operations
+  keywordTrie->insert("xor", TokenType::INSTRUCTION); // Bitwise XOR
+  keywordTrie->insert("and", TokenType::INSTRUCTION); // Bitwise AND
+  keywordTrie->insert("or", TokenType::INSTRUCTION); // Bitwise OR
+  keywordTrie->insert("not", TokenType::INSTRUCTION); // Bitwise NOT
+  keywordTrie->insert("shl", TokenType::INSTRUCTION); // Shift left
+  keywordTrie->insert("shr", TokenType::INSTRUCTION); // Shift right (logical)
+  keywordTrie->insert(
+      "sar", TokenType::INSTRUCTION); // Shift right (arithmetic)
+  keywordTrie->insert("rol", TokenType::INSTRUCTION); // Rotate left
+  keywordTrie->insert("ror", TokenType::INSTRUCTION); // Rotate right
+
+  // Signed comparisons (extended)
+  keywordTrie->insert("jo", TokenType::INSTRUCTION); // Jump if overflow
+  keywordTrie->insert("jno", TokenType::INSTRUCTION); // Jump if no overflow
+  keywordTrie->insert("js", TokenType::INSTRUCTION); // Jump if sign (negative)
+  keywordTrie->insert(
+      "jns", TokenType::INSTRUCTION); // Jump if not sign (positive)
   // 8-bit registers (lower parts)
   keywordTrie->insert("al", TokenType::REGISTER);
   keywordTrie->insert("bl", TokenType::REGISTER);

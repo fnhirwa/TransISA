@@ -95,6 +95,10 @@ void LLVMIRGen::visitInstructionNode(InstructionNode* node) {
     handleBinaryOpNode(node);
     return;
   }
+  if (cmpOpTable.find(node->opcode) != cmpOpTable.end()) {
+    handlCompareInstructionNode(node);
+    return;
+  }
 }
 
 void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
@@ -577,10 +581,6 @@ void LLVMIRGen::handleIntInstructionNode(InstructionNode* node) {
   }
 }
 
-void LLVMIRGen::handleSyscallInstructionNode(InstructionNode* node) {}
-
-void LLVMIRGen::handleRetInstructionNode(InstructionNode* node) {}
-
 llvm::Value* LLVMIRGen::handleDestinationMemory(MemoryNode* destMem) {
   llvm::Value* baseAddr = nullptr;
   llvm::Value* offsetVal = nullptr;
@@ -624,3 +624,58 @@ llvm::Value* LLVMIRGen::handleDestinationMemory(MemoryNode* destMem) {
   llvm::Value* ptr = builder.CreateIntToPtr(memAddr, i32PtrType, "ptr_cast");
   return ptr;
 }
+
+void LLVMIRGen::handleSyscallInstructionNode(InstructionNode* node) {}
+
+void LLVMIRGen::handleRetInstructionNode(InstructionNode* node) {}
+
+void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {}
+
+void LLVMIRGen::handlCompareInstructionNode(InstructionNode* node) {}
+
+void LLVMIRGen::handleJumpInstructionNode(InstructionNode* node) {
+  std::cerr << "Jump instruction: " << node->opcode << "\n";
+  if (node->operands.size() != 1) {
+    std::cerr << "Error: Jump operation requires exactly one operand.\n";
+    return;
+  }
+  ASTNode* labelNode = node->operands[0].get();
+  llvm::Function* function = builder.GetInsertBlock()->getParent();
+  if (!function) {
+    std::cerr << "Error: No parent function for the jump instruction\n";
+    return;
+  }
+
+  // Retrieve the label name
+  auto* label = dynamic_cast<LabelNode*>(labelNode);
+  if (!label) {
+    std::cerr << "Error: Jump operand must be a label.\n";
+    return;
+  }
+
+  const std::string& labelName = label->label;
+
+  // Check if the label has already been defined
+  auto it = labelMap.find(labelName);
+  llvm::BasicBlock* targetBB = nullptr;
+
+  if (it != labelMap.end()) {
+    // Label already exists, retrieve it
+    targetBB = it->second;
+  } else {
+    // Label does not exist, create a new basic block for it
+    targetBB = llvm::BasicBlock::Create(context, labelName, function);
+    labelMap[labelName] = targetBB; // Store it in the label map
+  }
+
+  // Create the unconditional branch to the target block
+  builder.CreateBr(targetBB);
+
+  // After creating a branch, you need to create a new basic block to continue
+  // emitting instructions
+  llvm::BasicBlock* nextBB =
+      llvm::BasicBlock::Create(context, "after_jump", function);
+  builder.SetInsertPoint(nextBB);
+}
+
+void LLVMIRGen::handleLoopInstructionNode(InstructionNode* node) {}

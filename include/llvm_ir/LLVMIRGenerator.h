@@ -16,6 +16,7 @@ class LLVMIRGen {
   llvm::Module module;
   llvm::IRBuilder<> builder;
   std::unordered_map<std::string, llvm::Value*> namedValues;
+  std::unordered_map<std::string, llvm::BasicBlock*> labelMap;
   // Define lookup table mapping x86 opcodes to LLVM IR generation functions
   std::unordered_map<
       std::string,
@@ -65,6 +66,44 @@ class LLVMIRGen {
                  lhs, rhs, "sartmp"); // Arithmetic shift right
            }},
   };
+  // Lookup table for comparison operations (cmp, test, etc.)
+  // This is a simplified version and may not cover all x86 comparison
+  // instructions.
+  std::unordered_map<
+      std::string,
+      std::function<
+          llvm::Value*(llvm::IRBuilder<>&, llvm::Value*, llvm::Value*)>>
+      cmpOpTable = {
+          {"cmp",
+           [](llvm::IRBuilder<>& builder, llvm::Value* lhs, llvm::Value* rhs) {
+             return builder.CreateICmpEQ(lhs, rhs, "cmptmp");
+           }},
+          {"test",
+           [](llvm::IRBuilder<>& builder, llvm::Value* lhs, llvm::Value* rhs) {
+             return builder.CreateICmpEQ(lhs, rhs, "testtmp");
+           }},
+  };
+
+  // Table for jump instructions for O(1) lookup.
+  std::unordered_map<std::string, std::string> jumpOpTable = {
+      {"jmp", "unconditional"},
+      {"je", "equal"},
+      {"jne", "not_equal"},
+      {"jg", "greater"},
+      {"jge", "greater_equal"},
+      {"jl", "less"},
+      {"jle", "less_equal"},
+      {"ja", "above"},
+      {"jz", "zero"},
+      {"jnz", "not_zero"},
+      {"jo", "overflow"},
+      {"jno", "no_overflow"},
+      {"js", "sign"},
+      {"jns", "no_sign"},
+      {"jae", "above_equal"},
+      {"jb", "below"},
+      {"jbe", "below_equal"},
+  };
 
  public:
   LLVMIRGen() : module("TransISA", context), builder(context) {}
@@ -81,6 +120,10 @@ class LLVMIRGen {
   void handleSyscallInstructionNode(InstructionNode* node);
   void handleIntInstructionNode(InstructionNode* node);
   void handleRetInstructionNode(InstructionNode* node);
+  void handleCallInstructionNode(InstructionNode* node);
+  void handlCompareInstructionNode(InstructionNode* node);
+  void handleJumpInstructionNode(InstructionNode* node);
+  void handleLoopInstructionNode(InstructionNode* node);
 
   // some memory related functions
   llvm::Value* handleDestinationMemory(MemoryNode* destMem);

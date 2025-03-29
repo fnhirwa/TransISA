@@ -208,6 +208,10 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
           operands.push_back(std::make_unique<StringNode>(operandToken.value));
         } else if (operandToken.type == TokenType::COMMA) {
           continue; // Skip commas
+        }
+        if (operandToken.value == "byte" || operandToken.value == "word" ||
+            operandToken.value == "dword" || operandToken.value == "qword") {
+          continue; // Skip size specifier
         } else if (operandToken.type == TokenType::L_BRACKET) {
           // we have indirect memory access
           std::string base =
