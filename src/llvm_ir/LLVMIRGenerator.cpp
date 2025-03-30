@@ -101,6 +101,8 @@ std::string check_operandType(ASTNode* operand) {
     return "mem";
   } else if (auto* intLit = dynamic_cast<IntLiteralNode*>(operand)) {
     return "int";
+  } else if (auto* string = dynamic_cast<StringNode*>(operand)) {
+    return "str";
   }
   return "unknown";
 }
@@ -197,28 +199,11 @@ void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
     lhs =
         builder.CreatePtrToInt(lhs, llvm::Type::getInt32Ty(context), "lhs_int");
   }
-  llvm::Value* rhs = nullptr;
+  llvm::Value* rhs = castInputTypes(rhsNode, rhsType);
 
-  if (rhsType == "int") {
-    auto* intLit = dynamic_cast<IntLiteralNode*>(rhsNode);
-    rhs = llvm::ConstantInt::get(context, llvm::APInt(32, intLit->value, true));
-  } else if (rhsType == "reg") {
-    auto* rhsReg = dynamic_cast<RegisterNode*>(rhsNode);
-    rhs = namedValues[rhsReg->registerName];
-    if (!rhs) {
-      std::cerr << "Error: Register " << rhsReg->registerName
-                << " is not initialized.\n";
-      return;
-    }
-    // Ensure rhs is an integer
-    if (rhs->getType()->isPointerTy()) {
-      rhs = builder.CreatePtrToInt(
-          rhs, llvm::Type::getInt32Ty(context), "rhs_int");
-    }
-  } else {
-    std::cerr
-        << "Error: Unsupported right operand type for binary operation.\n";
-    return;
+  if (rhs->getType()->isPointerTy()) {
+    rhs =
+        builder.CreatePtrToInt(rhs, llvm::Type::getInt32Ty(context), "rhs_int");
   }
 
   // Lookup the operation
@@ -682,8 +667,7 @@ llvm::Value* LLVMIRGen::castInputTypes(
     nodeValue = namedValues[srcReg->registerName];
 
     if (!nodeValue) {
-      std::cerr << "Error: Source register " << srcReg->registerName
-                << " not found\n";
+      std::cerr << "Error: Register " << srcReg->registerName << " not found\n";
       return nullptr;
     }
   } else if (nodeType == "mem") {
@@ -729,8 +713,24 @@ llvm::Value* LLVMIRGen::castInputTypes(
 
     nodeValue =
         builder.CreateLoad(llvm::Type::getInt32Ty(context), ptr, "mem_load");
+  } else if (nodeType == "str") {
+    auto* strNode = dynamic_cast<StringNode*>(inputNode);
+    if (!strNode || strNode->value.empty()) {
+      std::cerr << "Error: Invalid string operand\n";
+      return nullptr;
+    }
+
+    // Get the ASCII value of the first character in the string
+    char firstChar = strNode->value[0];
+    int asciiValue = static_cast<int>(firstChar);
+
+    // Create an LLVM constant for the ASCII value
+    nodeValue =
+        llvm::ConstantInt::get(context, llvm::APInt(32, asciiValue, true));
   } else {
-    std::cerr << "Error: Invalid source operand for 'cmp' instruction\n";
+    std::cerr << "Error: Invalid operand type for casting: " << nodeType
+              << "\n";
+    inputNode->print();
     return nullptr;
   }
   return nodeValue;
