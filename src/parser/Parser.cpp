@@ -172,12 +172,18 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
 
     // Handle function labels
     if (currentToken.type == TokenType::LABEL) {
-      if (function) {
-        function->addBasicBlock(std::move(basicBlock));
-        root->addBasicBlock(std::move(function)); // Finalize previous function
+      if (!function) {
+        function = std::make_unique<FunctionNode>(
+            "main_function"); // Create a single function to hold all blocks
       }
-      function = std::make_unique<FunctionNode>(currentToken.value);
-      basicBlock = std::make_unique<BasicBlockNode>("entry");
+      if (basicBlock) {
+        function->addBasicBlock(
+            std::move(basicBlock)); // Finalize the previous block
+      }
+      basicBlock = std::make_unique<BasicBlockNode>(
+          currentToken.value); // Create a new basic block for the label
+      parserLabelMap[currentToken.value] =
+          basicBlock.get(); // Store the block in labelMap
       consume();
     }
 

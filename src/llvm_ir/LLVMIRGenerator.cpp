@@ -44,18 +44,24 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
   llvm::Function* function = llvm::Function::Create(
       funcType, llvm::Function::ExternalLinkage, node->name, &module);
 
+  // Create the entry block but don't add instructions to it directly
   llvm::BasicBlock* entryBB =
-      llvm::BasicBlock::Create(context, "entry", function);
-  builder.SetInsertPoint(entryBB); // Ensure all instructions go into this block
+      llvm::BasicBlock::Create(context, node->name, function);
+  builder.SetInsertPoint(entryBB); // Temporary placeholder insertion point
 
+  labelMap[node->name] = entryBB; // Add entry block to labelMap
+
+  // Generate IR for each basic block
   for (const auto& block : node->basicBlocks) {
     if (block) {
       visitBasicBlockNode(dynamic_cast<BasicBlockNode*>(block.get()));
     }
   }
 
-  // If function needs a return, explicitly add one at the end
-  builder.CreateRetVoid();
+  // If the last block has no terminator, add a return instruction
+  if (!builder.GetInsertBlock()->getTerminator()) {
+    builder.CreateRetVoid();
+  }
 }
 
 void LLVMIRGen::visitBasicBlockNode(BasicBlockNode* node) {
@@ -65,7 +71,12 @@ void LLVMIRGen::visitBasicBlockNode(BasicBlockNode* node) {
     return;
   }
 
-  // Do NOT create a new BasicBlock
+  llvm::BasicBlock* bb =
+      llvm::BasicBlock::Create(context, node->label, function);
+  labelMap[node->label] = bb;
+
+  builder.SetInsertPoint(bb);
+
   for (const auto& instr : node->instructions) {
     visitInstructionNode(dynamic_cast<InstructionNode*>(instr.get()));
   }
@@ -101,9 +112,15 @@ void LLVMIRGen::visitInstructionNode(InstructionNode* node) {
     return;
   }
   if (cmpOpTable.find(node->opcode) != cmpOpTable.end()) {
+    std::cerr << "We are not handling comparison instructions yet:\n";
     handlCompareInstructionNode(node);
     return;
   }
+  // if (jumpOpTable.find(node->opcode) != jumpOpTable.end()) {
+  //   std::cerr << "We are not handling branching instructions yet:\n";
+  //   handleBranchingInstructions(node);
+  //   return;
+  // }
 }
 
 void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
@@ -642,51 +659,245 @@ void LLVMIRGen::handleRetInstructionNode(InstructionNode* node) {}
 
 void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {}
 
-void LLVMIRGen::handlCompareInstructionNode(InstructionNode* node) {}
+llvm::Value* LLVMIRGen::castInputTypes(
+    ASTNode* inputNode,
+    const std::string nodeType) {
+  llvm::Value* nodeValue = nullptr;
 
-void LLVMIRGen::handleJumpInstructionNode(InstructionNode* node) {
-  std::cerr << "Jump instruction: " << node->opcode << "\n";
-  if (node->operands.size() != 1) {
-    std::cerr << "Error: Jump operation requires exactly one operand.\n";
-    return;
-  }
-  ASTNode* labelNode = node->operands[0].get();
-  llvm::Function* function = builder.GetInsertBlock()->getParent();
-  if (!function) {
-    std::cerr << "Error: No parent function for the jump instruction\n";
-    return;
-  }
+  if (nodeType == "int") {
+    auto* intLit = dynamic_cast<IntLiteralNode*>(inputNode);
+    nodeValue =
+        llvm::ConstantInt::get(context, llvm::APInt(32, intLit->value, true));
+  } else if (nodeType == "reg") {
+    auto* srcReg = dynamic_cast<RegisterNode*>(inputNode);
+    nodeValue = namedValues[srcReg->registerName];
 
-  // Retrieve the label name
-  auto* label = dynamic_cast<LabelNode*>(labelNode);
-  if (!label) {
-    std::cerr << "Error: Jump operand must be a label.\n";
-    return;
-  }
+    if (!nodeValue) {
+      std::cerr << "Error: Source register " << srcReg->registerName
+                << " not found\n";
+      return nullptr;
+    }
+  } else if (nodeType == "mem") {
+    auto* memNode = dynamic_cast<MemoryNode*>(inputNode);
+    if (!memNode) {
+      std::cerr << "Error: Invalid memory operand\n";
+      return nullptr;
+    }
+    llvm::Value* baseAddr = nullptr;
+    llvm::Value* offsetVal = nullptr;
 
-  const std::string& labelName = label->label;
+    if (!memNode->base.empty()) {
+      if (namedValues.find(memNode->base) == namedValues.end()) {
+        std::cerr << "Error: Base register " << memNode->base
+                  << " not allocated\n";
+        return nullptr;
+      }
+      baseAddr = namedValues[memNode->base];
+      baseAddr = builder.CreateLoad(
+          llvm::Type::getInt32Ty(context), baseAddr, memNode->base);
+    }
 
-  // Check if the label has already been defined
-  auto it = labelMap.find(labelName);
-  llvm::BasicBlock* targetBB = nullptr;
+    if (!memNode->offset.empty()) {
+      try {
+        int offsetInt = std::stoi(memNode->offset);
+        offsetVal =
+            llvm::ConstantInt::get(context, llvm::APInt(32, offsetInt, true));
+      } catch (const std::exception& e) {
+        std::cerr << "Error: Invalid memory offset '" << memNode->offset
+                  << "'\n";
+        return nullptr;
+      }
+    }
 
-  if (it != labelMap.end()) {
-    // Label already exists, retrieve it
-    targetBB = it->second;
+    llvm::Value* memAddr = baseAddr;
+    if (offsetVal) {
+      memAddr = builder.CreateAdd(baseAddr, offsetVal, "mem_addr");
+    }
+
+    llvm::Type* i32PtrType =
+        llvm::PointerType::get(llvm::Type::getInt32Ty(context), 0);
+    llvm::Value* ptr = builder.CreateIntToPtr(memAddr, i32PtrType, "ptr_cast");
+
+    nodeValue =
+        builder.CreateLoad(llvm::Type::getInt32Ty(context), ptr, "mem_load");
   } else {
-    // Label does not exist, create a new basic block for it
-    targetBB = llvm::BasicBlock::Create(context, labelName, function);
-    labelMap[labelName] = targetBB; // Store it in the label map
+    std::cerr << "Error: Invalid source operand for 'cmp' instruction\n";
+    return nullptr;
+  }
+  return nodeValue;
+}
+
+void LLVMIRGen::handlCompareInstructionNode(InstructionNode* node) {
+  if (node->operands.size() != 2) {
+    std::cerr
+        << "Error: The Compare Instruction requires exactly two operands.\n";
+    return;
+  }
+  ASTNode* lhsNode = node->operands[0].get();
+  ASTNode* rhsNode = node->operands[1].get();
+
+  // destination register for comparison it should also be a memory
+  std::string lhsType = check_operandType(lhsNode);
+  std::string rhsType = check_operandType(rhsNode);
+  if (lhsType != "reg" && lhsType != "mem" && lhsType != "int") {
+    std::cerr << "Error: Left operand must be a supported type.\n";
+    return;
+  }
+  if (rhsType != "reg" && rhsType != "int" && rhsType != "mem") {
+    std::cerr << "Error: Right operand must be a supported type.\n";
+    return;
+  }
+  llvm::Value* lhsValue = castInputTypes(lhsNode, lhsType);
+  llvm::Value* rhsValue = castInputTypes(rhsNode, rhsType);
+  if (!lhsValue || !rhsValue) {
+    std::cerr << "Error: Invalid operands for comparison\n";
+    return;
+  }
+  if (node->opcode == "cmp") {
+    // Ensure both values are of the same type
+    llvm::Value* result = builder.CreateSub(lhsValue, rhsValue, "cmp_tmp");
+
+    // Update Zero Flag (ZF)
+    ContextCPUState.zeroFlag = builder.CreateICmpEQ(
+        result, llvm::ConstantInt::get(lhsValue->getType(), 0), "zeroFlag");
+
+    // Update Sign Flag (SF)
+    ContextCPUState.signFlag = builder.CreateICmpSLT(
+        result, llvm::ConstantInt::get(lhsValue->getType(), 0), "signFlag");
+
+    // Update Carry Flag (CF)
+    ContextCPUState.carryFlag =
+        builder.CreateICmpULT(lhsValue, rhsValue, "carryFlag");
+
+    // Update Overflow Flag (OF)
+    llvm::Value* lhsSign = builder.CreateICmpSLT(
+        lhsValue, llvm::ConstantInt::get(lhsValue->getType(), 0));
+    llvm::Value* rhsSign = builder.CreateICmpSLT(
+        rhsValue, llvm::ConstantInt::get(rhsValue->getType(), 0));
+    llvm::Value* resultSign = builder.CreateICmpSLT(
+        result, llvm::ConstantInt::get(lhsValue->getType(), 0));
+    ContextCPUState.overflowFlag = builder.CreateXor(
+        builder.CreateXor(lhsSign, rhsSign), resultSign, "overflowFlag");
+  } else if (node->opcode == "test") {
+    llvm::Value* result = builder.CreateAnd(lhsValue, rhsValue, "test_tmp");
+
+    // Update Zero Flag (ZF): Set if result is zero
+    ContextCPUState.zeroFlag = builder.CreateICmpEQ(
+        result, llvm::ConstantInt::get(lhsValue->getType(), 0), "zeroFlag");
+
+    // Update Sign Flag (SF): Set if result is negative
+    ContextCPUState.signFlag = builder.CreateICmpSLT(
+        result, llvm::ConstantInt::get(lhsValue->getType(), 0), "signFlag");
+
+    // Clear Carry Flag (CF)
+    ContextCPUState.carryFlag = llvm::ConstantInt::getFalse(context);
+
+    // Clear Overflow Flag (OF)
+    ContextCPUState.overflowFlag = llvm::ConstantInt::getFalse(context);
+  } else {
+    std::cerr << "This comparison instruction is not supported yet!!: "
+              << node->opcode << "\n";
+    return;
+  }
+}
+
+void LLVMIRGen::handleBranchingInstructions(InstructionNode* node) {
+  llvm::Function* function = builder.GetInsertBlock()->getParent();
+
+  ASTNode* branchLabel = node->operands[0].get();
+  if (!branchLabel) {
+    std::cerr << "Error: No label provided for branching instruction\n";
+    return;
   }
 
-  // Create the unconditional branch to the target block
-  builder.CreateBr(targetBB);
+  auto* labelNode = dynamic_cast<MemoryNode*>(branchLabel);
+  if (!labelNode) {
+    std::cerr << "Error: Invalid label type for branching instruction\n";
+    return;
+  }
 
-  // After creating a branch, you need to create a new basic block to continue
-  // emitting instructions
-  llvm::BasicBlock* nextBB =
-      llvm::BasicBlock::Create(context, "after_jump", function);
-  builder.SetInsertPoint(nextBB);
+  std::string targetLabel = labelNode->base;
+  if (targetLabel.empty()) {
+    std::cerr << "Error: Empty label for branching instruction\n";
+    return;
+  }
+
+  llvm::BasicBlock* trueBB;
+  if (labelMap.find(targetLabel) == labelMap.end()) {
+    // Create a new BasicBlock for the target label if it doesn't exist
+    trueBB = llvm::BasicBlock::Create(context, targetLabel, function);
+    labelMap[targetLabel] = trueBB;
+  } else {
+    // Retrieve the existing BasicBlock
+    trueBB = labelMap[targetLabel];
+  }
+
+  std::string opcode = node->opcode;
+  llvm::Value* condition = nullptr;
+
+  if (opcode == "je") {
+    condition = ContextCPUState.zeroFlag; // Check Zero Flag (ZF)
+  } else if (opcode == "jne") {
+    condition = builder.CreateICmpNE(
+        ContextCPUState.zeroFlag,
+        llvm::ConstantInt::getTrue(context),
+        "cmp_ne");
+  } else if (opcode == "jg") {
+    condition = builder.CreateAnd(
+        builder.CreateICmpEQ(
+            ContextCPUState.overflowFlag, ContextCPUState.signFlag, "cmp_eq"),
+        builder.CreateICmpNE(
+            ContextCPUState.zeroFlag,
+            llvm::ConstantInt::getTrue(context),
+            "cmp_ne"),
+        "jg_condition");
+  } else if (opcode == "jge") {
+    condition = builder.CreateICmpEQ(
+        ContextCPUState.overflowFlag,
+        ContextCPUState.signFlag,
+        "jge_condition");
+  } else if (opcode == "jl") {
+    condition = builder.CreateICmpNE(
+        ContextCPUState.overflowFlag, ContextCPUState.signFlag, "jl_condition");
+  } else if (opcode == "jle") {
+    condition = builder.CreateOr(
+        builder.CreateICmpNE(
+            ContextCPUState.overflowFlag,
+            ContextCPUState.signFlag,
+            "jl_condition"),
+        ContextCPUState.zeroFlag,
+        "jle_condition");
+  } else if (opcode == "jc") {
+    condition = ContextCPUState.carryFlag;
+  } else if (opcode == "jnc") {
+    condition = builder.CreateICmpNE(
+        ContextCPUState.carryFlag,
+        llvm::ConstantInt::getTrue(context),
+        "jnc_condition");
+  } else if (opcode == "jmp") { // Unconditional jump
+    builder.CreateBr(trueBB);
+    builder.SetInsertPoint(
+        trueBB); // Set the insertion point to the destination block
+    return;
+  } else {
+    std::cerr << "Error: Unsupported branching opcode " << opcode << "\n";
+    return;
+  }
+
+  if (!condition) {
+    std::cerr << "Error: Failed to generate condition for branch instruction\n";
+    return;
+  }
+
+  // Create a new BasicBlock for the false path
+  llvm::BasicBlock* falseBB =
+      llvm::BasicBlock::Create(context, "falseBB", function);
+
+  // Create the conditional branch
+  builder.CreateCondBr(condition, trueBB, falseBB);
+
+  // Update the insertion point
+  builder.SetInsertPoint(falseBB);
 }
 
 void LLVMIRGen::handleLoopInstructionNode(InstructionNode* node) {}

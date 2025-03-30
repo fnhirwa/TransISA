@@ -10,6 +10,16 @@
 #include "llvm/IR/Module.h"
 #include "parser/AST.h"
 
+struct TrackCPUState {
+  llvm::Value* zeroFlag; // Set if result is zero
+  llvm::Value* signFlag; // Set if result is negative
+  llvm::Value* carryFlag; // For unsigned comparisons
+  llvm::Value* overflowFlag; // For signed comparisons
+  TrackCPUState()
+      : zeroFlag(nullptr), signFlag(nullptr), carryFlag(nullptr),
+        overflowFlag(nullptr) {}
+};
+
 class LLVMIRGen {
  private:
   llvm::LLVMContext context;
@@ -104,6 +114,7 @@ class LLVMIRGen {
       {"jb", "below"},
       {"jbe", "below_equal"},
   };
+  TrackCPUState ContextCPUState;
 
  public:
   LLVMIRGen() : module("TransISA", context), builder(context) {}
@@ -122,11 +133,12 @@ class LLVMIRGen {
   void handleRetInstructionNode(InstructionNode* node);
   void handleCallInstructionNode(InstructionNode* node);
   void handlCompareInstructionNode(InstructionNode* node);
-  void handleJumpInstructionNode(InstructionNode* node);
+  void handleBranchingInstructions(InstructionNode* node);
   void handleLoopInstructionNode(InstructionNode* node);
 
   // some memory related functions
   llvm::Value* handleDestinationMemory(MemoryNode* destMem);
   llvm::Value* handleSourceMemory(MemoryNode* srcMem);
+  llvm::Value* castInputTypes(ASTNode* inputNode, const std::string nodeType);
 };
 #endif // LLVMIRGENERATOR_H
