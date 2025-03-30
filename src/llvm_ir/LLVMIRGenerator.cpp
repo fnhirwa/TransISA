@@ -44,18 +44,20 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
   llvm::Function* function = llvm::Function::Create(
       funcType, llvm::Function::ExternalLinkage, node->name, &module);
 
-  // Create the entry block but don't add instructions to it directly
-  llvm::BasicBlock* entryBB =
-      llvm::BasicBlock::Create(context, "entry", function);
-  builder.SetInsertPoint(entryBB); // Set insertion point to the entry block
-
-  // Initialize the vector for this function label in the map
-  labelMap[node->name] = entryBB;
+  llvm::BasicBlock* entryBB = nullptr; // Initially null, to be assigned later
 
   // Visit all basic blocks of the function
   for (const auto& block : node->basicBlocks) {
     if (block) {
-      visitBasicBlockNode(dynamic_cast<BasicBlockNode*>(block.get()));
+      auto* basicBlockNode = dynamic_cast<BasicBlockNode*>(block.get());
+      if (!entryBB) {
+        // Use the first encountered block as the entry block
+        entryBB = llvm::BasicBlock::Create(context, "entry", function);
+        labelMap[basicBlockNode->label] = entryBB;
+        builder.SetInsertPoint(entryBB);
+      }
+
+      visitBasicBlockNode(basicBlockNode);
     }
   }
 
