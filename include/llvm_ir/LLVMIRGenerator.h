@@ -9,6 +9,7 @@
 #include "llvm/IR/LLVMContext.h"
 #include "llvm/IR/Module.h"
 #include "parser/AST.h"
+#include "parser/Parser.h"
 
 struct TrackCPUState {
   llvm::Value* zeroFlag; // Set if result is zero

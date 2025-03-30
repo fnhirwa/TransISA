@@ -23,7 +23,7 @@ class Parser {
   explicit Parser(std::vector<Token> tokens);
   std::unique_ptr<RootNode> parse();
   // label map to store the label and its corresponding basic block
-  std::unordered_map<std::string, BasicBlockNode*> parserLabelMap;
+  static std::unordered_map<std::string, BasicBlockNode*> parserLabelMap;
 
  private:
   void parseDataSection(std::unique_ptr<RootNode>& root);

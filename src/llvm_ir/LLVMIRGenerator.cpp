@@ -46,19 +46,20 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
 
   // Create the entry block but don't add instructions to it directly
   llvm::BasicBlock* entryBB =
-      llvm::BasicBlock::Create(context, node->name, function);
-  builder.SetInsertPoint(entryBB); // Temporary placeholder insertion point
+      llvm::BasicBlock::Create(context, "entry", function);
+  builder.SetInsertPoint(entryBB); // Set insertion point to the entry block
 
-  labelMap[node->name] = entryBB; // Add entry block to labelMap
+  // Initialize the vector for this function label in the map
+  labelMap[node->name] = entryBB;
 
-  // Generate IR for each basic block
+  // Visit all basic blocks of the function
   for (const auto& block : node->basicBlocks) {
     if (block) {
       visitBasicBlockNode(dynamic_cast<BasicBlockNode*>(block.get()));
     }
   }
 
-  // If the last block has no terminator, add a return instruction
+  // If the function doesn't have a return, explicitly add one at the end
   if (!builder.GetInsertBlock()->getTerminator()) {
     builder.CreateRetVoid();
   }
@@ -71,12 +72,22 @@ void LLVMIRGen::visitBasicBlockNode(BasicBlockNode* node) {
     return;
   }
 
-  llvm::BasicBlock* bb =
-      llvm::BasicBlock::Create(context, node->label, function);
-  labelMap[node->label] = bb;
+  // Check if the block is already created
+  if (labelMap.find(node->label) != labelMap.end()) {
+    // Block already exists, retrieve it
+    llvm::BasicBlock* existingBB = labelMap[node->label];
+    builder.SetInsertPoint(existingBB);
+  } else {
+    // Create a new LLVM BasicBlock for this label
+    llvm::BasicBlock* bb =
+        llvm::BasicBlock::Create(context, node->label, function);
 
-  builder.SetInsertPoint(bb);
+    // Store the newly created block in the labelMap
+    labelMap[node->label] = bb;
+    builder.SetInsertPoint(bb);
+  }
 
+  // Now, visit each instruction within this block
   for (const auto& instr : node->instructions) {
     visitInstructionNode(dynamic_cast<InstructionNode*>(instr.get()));
   }
@@ -112,15 +123,13 @@ void LLVMIRGen::visitInstructionNode(InstructionNode* node) {
     return;
   }
   if (cmpOpTable.find(node->opcode) != cmpOpTable.end()) {
-    std::cerr << "We are not handling comparison instructions yet:\n";
     handlCompareInstructionNode(node);
     return;
   }
-  // if (jumpOpTable.find(node->opcode) != jumpOpTable.end()) {
-  //   std::cerr << "We are not handling branching instructions yet:\n";
-  //   handleBranchingInstructions(node);
-  //   return;
-  // }
+  if (jumpOpTable.find(node->opcode) != jumpOpTable.end()) {
+    handleBranchingInstructions(node);
+    return;
+  }
 }
 
 void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
@@ -823,12 +832,28 @@ void LLVMIRGen::handleBranchingInstructions(InstructionNode* node) {
   }
 
   llvm::BasicBlock* trueBB;
+  auto parsedlabelMap = Parser::parserLabelMap;
+
+  if (parsedlabelMap.find(targetLabel) == parsedlabelMap.end()) {
+    std::cerr << "Error: Target label '" << targetLabel
+              << "' not found in the label map\n";
+    return;
+  }
+
   if (labelMap.find(targetLabel) == labelMap.end()) {
-    // Create a new BasicBlock for the target label if it doesn't exist
+    // The block has not been created in the current LLVM context yet, so we
+    // create it now
+    BasicBlockNode* targetNode = parsedlabelMap[targetLabel];
+
+    llvm::Function* function = builder.GetInsertBlock()->getParent();
     trueBB = llvm::BasicBlock::Create(context, targetLabel, function);
+
     labelMap[targetLabel] = trueBB;
+    builder.SetInsertPoint(trueBB);
+    visitBasicBlockNode(targetNode);
+
   } else {
-    // Retrieve the existing BasicBlock
+    // Retrieve the most recent block with the target label
     trueBB = labelMap[targetLabel];
   }
 
@@ -876,8 +901,7 @@ void LLVMIRGen::handleBranchingInstructions(InstructionNode* node) {
         "jnc_condition");
   } else if (opcode == "jmp") { // Unconditional jump
     builder.CreateBr(trueBB);
-    builder.SetInsertPoint(
-        trueBB); // Set the insertion point to the destination block
+    builder.SetInsertPoint(trueBB);
     return;
   } else {
     std::cerr << "Error: Unsupported branching opcode " << opcode << "\n";
@@ -889,15 +913,17 @@ void LLVMIRGen::handleBranchingInstructions(InstructionNode* node) {
     return;
   }
 
-  // Create a new BasicBlock for the false path
-  llvm::BasicBlock* falseBB =
-      llvm::BasicBlock::Create(context, "falseBB", function);
+  static llvm::BasicBlock* commonFalseBB = nullptr;
+  if (!commonFalseBB) {
+    commonFalseBB =
+        llvm::BasicBlock::Create(context, "FalseBasicBlock", function);
+  }
 
   // Create the conditional branch
-  builder.CreateCondBr(condition, trueBB, falseBB);
+  builder.CreateCondBr(condition, trueBB, commonFalseBB);
 
-  // Update the insertion point
-  builder.SetInsertPoint(falseBB);
+  // Update the insertion point to the false block
+  builder.SetInsertPoint(commonFalseBB);
 }
 
 void LLVMIRGen::handleLoopInstructionNode(InstructionNode* node) {}

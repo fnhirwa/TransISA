@@ -26,6 +26,8 @@ Token Parser::consume() {
                                        0};
 }
 
+std::unordered_map<std::string, BasicBlockNode*> Parser::parserLabelMap;
+
 // Entry point for parsing
 std::unique_ptr<RootNode> Parser::parse() {
   auto root = std::make_unique<RootNode>();
