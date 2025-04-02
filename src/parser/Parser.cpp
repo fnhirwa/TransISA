@@ -27,6 +27,7 @@ Token Parser::consume() {
 }
 
 std::unordered_map<std::string, BasicBlockNode*> Parser::parserLabelMap;
+std::unordered_map<std::string, FunctionNode*> Parser::parserFunctionMap;
 
 // Entry point for parsing
 std::unique_ptr<RootNode> Parser::parse() {
@@ -162,43 +163,53 @@ void Parser::parseBssSection(std::unique_ptr<RootNode>& root) {
 
 // Parse the .text section (functions & instructions)
 void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
-  std::unique_ptr<FunctionNode> function = nullptr;
-  std::unique_ptr<BasicBlockNode> basicBlock = nullptr;
+  std::unique_ptr<FunctionNode> currentFunction = nullptr;
+  std::unique_ptr<BasicBlockNode> currentBasicBlock = nullptr;
 
   while (index < tokens.size()) {
     Token currentToken = peek();
-    // **Check for a new section and exit immediately**
+
     if (currentToken.type == TokenType::SEGMENT_DIRECTIVE) {
-      break; // Exit parsing the .text section
+      break;
     }
 
-    // Handle function labels
     if (currentToken.type == TokenType::LABEL) {
-      if (!function) {
-        function = std::make_unique<FunctionNode>(
-            "main_function"); // Create a single function to hold all blocks
+      std::string labelName = currentToken.value;
+
+      // If this label is called by a 'call' instruction or is newly
+      // encountered, treat it as a new function.
+      if (parserFunctionMap.find(labelName) == parserFunctionMap.end()) {
+        if (currentFunction) {
+          // Finish the current function
+          if (currentBasicBlock) {
+            currentFunction->addBasicBlock(std::move(currentBasicBlock));
+          }
+          root->addBasicBlock(std::move(currentFunction));
+        }
+
+        // Create a new function node
+        currentFunction = std::make_unique<FunctionNode>(labelName);
+        parserFunctionMap[labelName] = currentFunction.get();
       }
-      if (basicBlock) {
-        function->addBasicBlock(
-            std::move(basicBlock)); // Finalize the previous block
+
+      // Create a new BasicBlock for the label
+      if (currentBasicBlock) {
+        currentFunction->addBasicBlock(std::move(currentBasicBlock));
       }
-      basicBlock = std::make_unique<BasicBlockNode>(
-          currentToken.value); // Create a new basic block for the label
-      parserLabelMap[currentToken.value] =
-          basicBlock.get(); // Store the block in labelMap
+      currentBasicBlock = std::make_unique<BasicBlockNode>(labelName);
+      parserLabelMap[labelName] = currentBasicBlock.get();
+
       consume();
     }
 
-    // Handle instructions
     else if (currentToken.type == TokenType::INSTRUCTION) {
       std::string opcode = consume().value;
       std::vector<std::unique_ptr<ASTNode>> operands;
 
-      // Parse operands
       while (peek().type != TokenType::INSTRUCTION &&
              peek().type != TokenType::LABEL &&
              peek().type != TokenType::SEGMENT_DIRECTIVE &&
-             peek().type != TokenType::END) { // **Check for new section**
+             peek().type != TokenType::END) {
         Token operandToken = consume();
         std::string numberType = detectNumberType(operandToken.value);
 
@@ -214,69 +225,48 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
         } else if (operandToken.type == TokenType::STRING) {
           operands.push_back(std::make_unique<StringNode>(operandToken.value));
         } else if (operandToken.type == TokenType::COMMA) {
-          continue; // Skip commas
-        }
-        if (operandToken.value == "byte" || operandToken.value == "word" ||
+          continue;
+        } else if (
+            operandToken.value == "byte" || operandToken.value == "word" ||
             operandToken.value == "dword" || operandToken.value == "qword") {
-          continue; // Skip size specifier
-        } else if (operandToken.type == TokenType::L_BRACKET) {
-          // we have indirect memory access
-          std::string base =
-              consume().value; // base register or memory location
-          std::string offset = "";
-          bool isIndirect = true;
-          if (peek().value == "+") {
-            consume(); // consume '+'
-            offset = consume().value; // offset
-          }
-          consume(); // consume ']'
-          operands.push_back(
-              std::make_unique<MemoryNode>(base, offset, isIndirect));
-        } else if (operandToken.type == TokenType::IDENTIFIER) // treate is as a
-                                                               // memory address
-                                                               // of some global
-                                                               // variable
-        {
+          continue;
+        } else if (operandToken.type == TokenType::IDENTIFIER) {
           operands.push_back(
               std::make_unique<MemoryNode>(operandToken.value, "", false));
-        } else {
-          continue; // Skip unknown tokens
         }
       }
 
-      // Add instruction to the basic block
       auto instr =
           std::make_unique<InstructionNode>(opcode, std::move(operands));
-      basicBlock->addBasicBlock(std::move(instr));
+      currentBasicBlock->addBasicBlock(std::move(instr));
+
+      // If the instruction is a call, make sure the target is treated as a
+      // function.
+      if (opcode == "call" && !operands.empty()) {
+        auto* memNode = dynamic_cast<MemoryNode*>(operands[0].get());
+        if (memNode &&
+            parserFunctionMap.find(memNode->base) == parserFunctionMap.end()) {
+          // Register the function in the parserFunctionMap
+          parserFunctionMap[memNode->base] =
+              nullptr; // Mark it as seen but not yet parsed
+        }
+      }
     }
 
     else if (currentToken.type == TokenType::END) {
-      break; // End of tokens
-    } else if (currentToken.type == TokenType::DIRECTIVE) {
-      if (currentToken.value == "global") {
-        consume(); // Consume 'global' keyword
-        parseGlobal(root);
-      } else if (
-          currentToken.value == ".file" || currentToken.value == ".ident") {
-        consume(); // Consume file or ident directive
-      } else if (
-          currentToken.value == ".type" || currentToken.value == ".size") {
-        consume(); // Consume type or size directive
-      } else {
-        std::cerr << "Error: Unknown directive: " << currentToken.value << "\n";
-        consume();
-      }
+      break;
     }
 
     else {
-      consume(); // Skip unknown tokens
+      consume();
     }
   }
 
-  // Finalize any remaining function
-  if (function) {
-    function->addBasicBlock(std::move(basicBlock));
-    root->addBasicBlock(std::move(function));
+  if (currentFunction) {
+    if (currentBasicBlock) {
+      currentFunction->addBasicBlock(std::move(currentBasicBlock));
+    }
+    root->addBasicBlock(std::move(currentFunction));
   }
 }
 

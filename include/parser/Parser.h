@@ -24,6 +24,8 @@ class Parser {
   std::unique_ptr<RootNode> parse();
   // label map to store the label and its corresponding basic block
   static std::unordered_map<std::string, BasicBlockNode*> parserLabelMap;
+  // list of functions this will be updated when we encounter a call instruction
+  static std::unordered_map<std::string, FunctionNode*> parserFunctionMap;
 
  private:
   void parseDataSection(std::unique_ptr<RootNode>& root);

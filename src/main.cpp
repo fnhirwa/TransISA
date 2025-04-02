@@ -34,10 +34,20 @@ void testIRGen(std::string_view source) {
   std::unique_ptr<ASTNode> root = parser.parse();
   std::cout << "Generated AST:\n";
   root->print();
-  LLVMIRGen irGen;
-  llvm::Module* module = irGen.generateIR(root);
-  cout << "Generated LLVM IR:\n";
-  module->print(llvm::errs(), nullptr);
+  // print the parsed labels
+  std::cout << "Parsed Labels:\n";
+  for (const auto& label : Parser::parserLabelMap) {
+    std::cout << "Label: " << label.first << "\n";
+  }
+  // print the parsed functions
+  std::cout << "Parsed Functions:\n";
+  for (const auto& func : Parser::parserFunctionMap) {
+    std::cout << "Function: " << func.first << "\n";
+  }
+  // LLVMIRGen irGen;
+  // llvm::Module* module = irGen.generateIR(root);
+  // cout << "Generated LLVM IR:\n";
+  // module->print(llvm::errs(), nullptr);
 }
 
 int main(int argc, char* argv[]) {
