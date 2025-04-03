@@ -1,8 +1,9 @@
-#include "lexer/Lexer.h"
 #include <algorithm>
 #include <cctype>
 #include <iostream>
 #include <regex>
+
+#include "lexer/Lexer.h"
 #include "lexer/Token.h"
 
 std::vector<std::string> punctuations =
