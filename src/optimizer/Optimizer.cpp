@@ -1,4 +1,3 @@
-#include "optimizer/Optimizer.h"
 #include "llvm/IR/LegacyPassManager.h"
 #include "llvm/MC/TargetRegistry.h"
 #include "llvm/Support/CodeGen.h"
@@ -11,6 +10,8 @@
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils.h"
+
+#include "optimizer/Optimizer.h"
 
 Optimizer::Optimizer() {
   // Initialize LLVM targets
