@@ -1,4 +1,5 @@
 #include "parser/Parser.h"
+#include <unordered_set>
 
 // Constructor: Initializes the parser with tokens
 Parser::Parser(std::vector<Token> tokens)
@@ -161,7 +162,9 @@ void Parser::parseBssSection(std::unique_ptr<RootNode>& root) {
   }
 }
 
-// Parse the .text section (functions & instructions)
+static std::unordered_set<std::string>
+    calledFunctions; // Track called functions
+
 void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
   std::unique_ptr<FunctionNode> currentFunction = nullptr;
   std::unique_ptr<BasicBlockNode> currentBasicBlock = nullptr;
@@ -176,25 +179,29 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
     if (currentToken.type == TokenType::LABEL) {
       std::string labelName = currentToken.value;
 
-      // If this label is called by a 'call' instruction or is newly
-      // encountered, treat it as a new function.
-      if (parserFunctionMap.find(labelName) == parserFunctionMap.end()) {
-        if (currentFunction) {
-          // Finish the current function
-          if (currentBasicBlock) {
-            currentFunction->addBasicBlock(std::move(currentBasicBlock));
-          }
-          root->addBasicBlock(std::move(currentFunction));
-        }
+      // Only treat as a function if it's called or it's the entry point
+      bool isFunction =
+          (labelName == "_start" || calledFunctions.count(labelName) > 0);
 
-        // Create a new function node
-        currentFunction = std::make_unique<FunctionNode>(labelName);
-        parserFunctionMap[labelName] = currentFunction.get();
+      if (isFunction) {
+        if (parserFunctionMap.find(labelName) == parserFunctionMap.end()) {
+          if (currentFunction) {
+            if (currentBasicBlock) {
+              currentFunction->addBasicBlock(std::move(currentBasicBlock));
+            }
+            root->addBasicBlock(std::move(currentFunction));
+          }
+
+          currentFunction = std::make_unique<FunctionNode>(labelName);
+          parserFunctionMap[labelName] = currentFunction.get();
+        }
       }
 
-      // Create a new BasicBlock for the label
+      // Create a new BasicBlock for the label regardless of whether it's a
+      // function
       if (currentBasicBlock) {
-        currentFunction->addBasicBlock(std::move(currentBasicBlock));
+        if (currentFunction)
+          currentFunction->addBasicBlock(std::move(currentBasicBlock));
       }
       currentBasicBlock = std::make_unique<BasicBlockNode>(labelName);
       parserLabelMap[labelName] = currentBasicBlock.get();
@@ -236,21 +243,19 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
         }
       }
 
+      if (opcode == "call") {
+        // Track called function name
+        if (!operands.empty()) {
+          auto* memoryNode = dynamic_cast<MemoryNode*>(operands[0].get());
+          if (memoryNode) {
+            calledFunctions.insert(memoryNode->base); // Mark as a function
+          }
+        }
+      }
+
       auto instr =
           std::make_unique<InstructionNode>(opcode, std::move(operands));
       currentBasicBlock->addBasicBlock(std::move(instr));
-
-      // If the instruction is a call, make sure the target is treated as a
-      // function.
-      if (opcode == "call" && !operands.empty()) {
-        auto* memNode = dynamic_cast<MemoryNode*>(operands[0].get());
-        if (memNode &&
-            parserFunctionMap.find(memNode->base) == parserFunctionMap.end()) {
-          // Register the function in the parserFunctionMap
-          parserFunctionMap[memNode->base] =
-              nullptr; // Mark it as seen but not yet parsed
-        }
-      }
     }
 
     else if (currentToken.type == TokenType::END) {

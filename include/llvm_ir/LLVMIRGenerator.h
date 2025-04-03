@@ -28,7 +28,9 @@ class LLVMIRGen {
   llvm::IRBuilder<> builder;
   std::unordered_map<std::string, llvm::Value*> namedValues;
   std::unordered_map<std::string, llvm::BasicBlock*> labelMap;
-  // Define lookup table mapping x86 opcodes to LLVM IR generation functions
+  // predefined functions for lookup
+  std::unordered_map<std::string, llvm::Function*> definedFunctionsMap;
+  std::unordered_map<std::string, std::string> entryBlockNames;
   std::unordered_map<
       std::string,
       std::function<
@@ -132,10 +134,10 @@ class LLVMIRGen {
   void handleSyscallInstructionNode(InstructionNode* node);
   void handleIntInstructionNode(InstructionNode* node);
   void handleRetInstructionNode(InstructionNode* node);
-  void handleCallInstructionNode(InstructionNode* node);
   void handlCompareInstructionNode(InstructionNode* node);
   void handleBranchingInstructions(InstructionNode* node);
   void handleLoopInstructionNode(InstructionNode* node);
+  void handleCallInstructionNode(InstructionNode* node);
 
   // some memory related functions
   llvm::Value* handleDestinationMemory(MemoryNode* destMem);

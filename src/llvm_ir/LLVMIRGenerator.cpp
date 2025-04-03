@@ -39,17 +39,37 @@ void LLVMIRGen::visitGlobalVariableNode(GlobalVariableNode* node) {
 }
 
 void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
-  llvm::FunctionType* funcType =
-      llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
-  llvm::Function* function = llvm::Function::Create(
-      funcType, llvm::Function::ExternalLinkage, node->name, &module);
+  llvm::Function* function = nullptr;
+  // Check if the function is already declared
+  if (definedFunctionsMap.find(node->name) != definedFunctionsMap.end()) {
+    function = definedFunctionsMap[node->name];
+  } else {
+    // Create the function if it hasn't been declared yet
+    llvm::FunctionType* funcType =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
+    function = llvm::Function::Create(
+        funcType, llvm::Function::ExternalLinkage, node->name, &module);
+    definedFunctionsMap[node->name] = function;
+  }
 
   llvm::BasicBlock* entryBB = nullptr;
   bool isFirstBlock = true;
   // Declare all labels (basic blocks) upfront without generating IR
   // instructions
+  // std::vector<std::pair<std::string, BasicBlockNode*>> labelVector;
+  // for (const auto& labelPair : Parser::parserLabelMap) {
+  //   const std::string& labelName = labelPair.first;
+
+  //   // Check if the label is not in parserFunctionMap
+  //   if (Parser::parserFunctionMap.find(labelName) ==
+  //   Parser::parserFunctionMap.end()) {
+  //     labelVector.push_back(std::make_pair(labelName,
+  //     Parser::parserLabelMap[labelName]));
+  //   }
+  // }
   std::vector<std::pair<std::string, BasicBlockNode*>> labelVector(
       Parser::parserLabelMap.begin(), Parser::parserLabelMap.end());
+
   for (auto it = labelVector.rbegin(); it != labelVector.rend(); ++it) {
     const std::string& labelName = it->first;
 
@@ -58,6 +78,7 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
       llvm::BasicBlock* labelBB =
           llvm::BasicBlock::Create(context, labelName, function);
       if (isFirstBlock) {
+        entryBlockNames[labelName] = "entry";
         entryBB = labelBB;
         entryBB->setName("entry"); // Rename to "entry" for clarity
         builder.SetInsertPoint(entryBB);
@@ -66,6 +87,7 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
       }
       if (!isFirstBlock) {
         labelMap[labelName] = labelBB;
+        entryBlockNames[labelName] = labelName;
       }
     }
   }
@@ -74,17 +96,15 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
   if (labelMap.find("entry") != labelMap.end()) {
     entryBB = labelMap["entry"];
     builder.SetInsertPoint(entryBB);
-  } else {
-    std::cerr << "Error: Entry block not found in labelMap.\n";
-    return;
   }
-
   // Visit each block and generate the IR
   for (const auto& block : node->basicBlocks) {
     if (block) {
       auto* basicBlockNode = dynamic_cast<BasicBlockNode*>(block.get());
-      if (labelMap.find(basicBlockNode->label) != labelMap.end()) {
-        llvm::BasicBlock* bb = labelMap[basicBlockNode->label];
+      std::string basicBlockName = entryBlockNames[basicBlockNode->label];
+
+      if (labelMap.find(basicBlockName) != labelMap.end()) {
+        llvm::BasicBlock* bb = labelMap[basicBlockName];
         builder.SetInsertPoint(bb);
         visitBasicBlockNode(basicBlockNode);
       } else {
@@ -109,9 +129,10 @@ void LLVMIRGen::visitBasicBlockNode(BasicBlockNode* node) {
 
   // Get the block from the labelMap (it should exist from the initial
   // declaration step)
-  llvm::BasicBlock* bb = labelMap[node->label];
+  std::string blockName = entryBlockNames[node->label];
+  llvm::BasicBlock* bb = labelMap[blockName];
   if (!bb) {
-    std::cerr << "Error: Block '" << node->label << "' not found in labelMap\n";
+    std::cerr << "Error: Block '" << blockName << "' not found in labelMap\n";
     return;
   }
 
@@ -682,8 +703,6 @@ void LLVMIRGen::handleSyscallInstructionNode(InstructionNode* node) {}
 
 void LLVMIRGen::handleRetInstructionNode(InstructionNode* node) {}
 
-void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {}
-
 llvm::Value* LLVMIRGen::castInputTypes(
     ASTNode* inputNode,
     const std::string nodeType) {
@@ -855,19 +874,21 @@ void LLVMIRGen::handleBranchingInstructions(InstructionNode* node) {
 
   ASTNode* branchLabel = node->operands[0].get();
   if (!branchLabel) {
-    std::cerr << "Error: No label provided for branching instruction\n";
+    std::cerr << "Error: No label provided for: " << node->opcode
+              << " instruction\n";
     return;
   }
 
   auto* labelNode = dynamic_cast<MemoryNode*>(branchLabel);
   if (!labelNode) {
-    std::cerr << "Error: Invalid label type for branching instruction\n";
+    std::cerr << "Error: Invalid label type for: " << node->opcode
+              << " instruction\n";
     return;
   }
 
-  std::string targetLabel = labelNode->base;
+  std::string targetLabel = entryBlockNames[labelNode->base];
   if (targetLabel.empty()) {
-    std::cerr << "Error: Empty label for branching instruction\n";
+    std::cerr << "Error: Empty label for: " << node->opcode << " instruction\n";
     return;
   }
 
@@ -949,4 +970,44 @@ void LLVMIRGen::handleBranchingInstructions(InstructionNode* node) {
   // Update the insertion point to the false block
   builder.SetInsertPoint(commonFalseBB);
 }
+
+// when we have a function call
+void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {
+  llvm::Function* currentFunction = builder.GetInsertBlock()->getParent();
+  ASTNode* callee = node->operands[0].get();
+  if (!callee) {
+    std::cerr << "Error: No Function provided for call Instruction\n";
+    return;
+  }
+
+  auto* calleeNode = dynamic_cast<MemoryNode*>(callee);
+  if (!calleeNode) {
+    std::cerr << "Error: Invalid function type for: " << node->opcode
+              << " instruction\n";
+    return;
+  }
+
+  std::string targetFunctionName = calleeNode->base;
+  if (targetFunctionName.empty()) {
+    std::cerr << "Error: No function specified for: " << node->opcode
+              << " instruction\n";
+    return;
+  }
+  llvm::Function* calleeFunction = nullptr;
+  // check if the function is predefined in
+  if (definedFunctionsMap.find(targetFunctionName) !=
+      definedFunctionsMap.end()) {
+    calleeFunction = definedFunctionsMap[targetFunctionName];
+  } else {
+    llvm::FunctionType* funcType =
+        llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
+    calleeFunction = llvm::Function::Create(
+        funcType, llvm::Function::ExternalLinkage, targetFunctionName, module);
+    definedFunctionsMap[targetFunctionName] = calleeFunction;
+  }
+
+  llvm::CallInst* callInst = builder.CreateCall(calleeFunction);
+  callInst->setTailCall(false);
+}
+
 void LLVMIRGen::handleLoopInstructionNode(InstructionNode* node) {}

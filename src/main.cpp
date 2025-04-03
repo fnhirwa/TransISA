@@ -44,10 +44,10 @@ void testIRGen(std::string_view source) {
   for (const auto& func : Parser::parserFunctionMap) {
     std::cout << "Function: " << func.first << "\n";
   }
-  // LLVMIRGen irGen;
-  // llvm::Module* module = irGen.generateIR(root);
-  // cout << "Generated LLVM IR:\n";
-  // module->print(llvm::errs(), nullptr);
+  LLVMIRGen irGen;
+  llvm::Module* module = irGen.generateIR(root);
+  cout << "Generated LLVM IR:\n";
+  module->print(llvm::errs(), nullptr);
 }
 
 int main(int argc, char* argv[]) {
