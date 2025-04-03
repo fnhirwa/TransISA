@@ -26,6 +26,12 @@ if(NOT DEFINED LLVM_DIR)
   )
 endif()
 
+if(DEFINED ENV{CMAKE_OSX_ARCHITECTURES})
+  set(CMAKE_OSX_ARCHITECTURES $ENV{CMAKE_OSX_ARCHITECTURES})
+else()
+  set(CMAKE_OSX_ARCHITECTURES "arm64")
+endif()
+
 # Detect Platform
 if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
   message(STATUS "Building for macOS")
