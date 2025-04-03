@@ -43,19 +43,22 @@ jobs:
         run: |
           brew update
           brew install cmake ninja llvm@19
-          echo "LLVM_DIR=$(brew --prefix llvm@19)/lib/cmake/llvm" >> $GITHUB_ENV
-          echo "CC=$(brew --prefix llvm@19)/bin/clang" >> $GITHUB_ENV
-          echo "CXX=$(brew --prefix llvm@19)/bin/clang++" >> $GITHUB_ENV
-          echo "CMAKE_AR=$(brew --prefix llvm@19)/bin/llvm-ar" >> $GITHUB_ENV
-          echo "CMAKE_RANLIB=$(brew --prefix llvm@19)/bin/llvm-ranlib" >> $GITHUB_ENV
-          echo "DYLD_LIBRARY_PATH=$(brew --prefix llvm@19)/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
-          echo "PATH=$(brew --prefix llvm@19)/bin:$PATH" >> $GITHUB_ENV
-          # Add these new environment variables
-          echo "CPLUS_INCLUDE_PATH=$(brew --prefix llvm@19)/include/c++/v1:$CPLUS_INCLUDE_PATH" >> $GITHUB_ENV
-          echo "C_INCLUDE_PATH=$(brew --prefix llvm@19)/include:$C_INCLUDE_PATH" >> $GITHUB_ENV
-          # This flag tells clang to use the libc++ that comes with LLVM instead of the system one
-          echo "CXXFLAGS=-stdlib=libc++" >> $GITHUB_ENV
-          echo "LDFLAGS=-L$(brew --prefix llvm@19)/lib -Wl,-rpath,$(brew --prefix llvm@19)/lib" >> $GITHUB_ENV
+          
+          # Store LLVM path for easy reference
+          LLVM_PREFIX=$(brew --prefix llvm@19)
+          
+          # Set up environment variables
+          echo "LLVM_DIR=${LLVM_PREFIX}/lib/cmake/llvm" >> $GITHUB_ENV
+          echo "CC=${LLVM_PREFIX}/bin/clang" >> $GITHUB_ENV
+          echo "CXX=${LLVM_PREFIX}/bin/clang++" >> $GITHUB_ENV
+          
+          # Critical fix - set compiler flags to use LLVM's libc++ instead of system
+          echo "CXXFLAGS=-stdlib=libc++ -nostdinc++ -I${LLVM_PREFIX}/include/c++/v1 -I${LLVM_PREFIX}/include" >> $GITHUB_ENV
+          echo "LDFLAGS=-L${LLVM_PREFIX}/lib -Wl,-rpath,${LLVM_PREFIX}/lib" >> $GITHUB_ENV
+          
+          # Set other required paths
+          echo "PATH=${LLVM_PREFIX}/bin:$PATH" >> $GITHUB_ENV
+          echo "DYLD_LIBRARY_PATH=${LLVM_PREFIX}/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
 
       - name: Verify LLVM Installation
         run: |
@@ -69,24 +72,24 @@ jobs:
       - name: Clean and Rebuild
         run: |
           rm -rf build # Delete old build artifacts
-          cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+          
+          # Create a verbose CMake command with all needed flags
+          cmake -B build -S . -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_OSX_ARCHITECTURES=${{ matrix.target }} \
             -DCMAKE_CXX_FLAGS="${CXXFLAGS}" \
+            -DCMAKE_C_FLAGS="${CFLAGS}" \
             -DCMAKE_EXE_LINKER_FLAGS="${LDFLAGS}" \
-            -DCMAKE_SHARED_LINKER_FLAGS="${LDFLAGS}"
+            -DCMAKE_SHARED_LINKER_FLAGS="${LDFLAGS}" \
+            -DCMAKE_MODULE_LINKER_FLAGS="${LDFLAGS}"
         env:
           LLVM_DIR: ${{ env.LLVM_DIR }}
           CC: ${{ env.CC }}
           CXX: ${{ env.CXX }}
-          CMAKE_AR: ${{ env.CMAKE_AR }}
-          CMAKE_RANLIB: ${{ env.CMAKE_RANLIB }}
-          PATH: ${{ env.PATH }}
-          LD_LIBRARY_PATH: ${{ env.LD_LIBRARY_PATH }}
-          DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH }}
-          CPLUS_INCLUDE_PATH: ${{ env.CPLUS_INCLUDE_PATH }}
-          C_INCLUDE_PATH: ${{ env.C_INCLUDE_PATH }}
           CXXFLAGS: ${{ env.CXXFLAGS }}
           LDFLAGS: ${{ env.LDFLAGS }}
+          PATH: ${{ env.PATH }}
+          DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH }}
 
       - name: Debug Static Library Issues (if build fails)
         if: failure()
