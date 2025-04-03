@@ -26,6 +26,28 @@ if(NOT DEFINED LLVM_DIR)
   )
 endif()
 
+# Detect Platform
+if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
+  message(STATUS "Building for macOS")
+
+  # Set architecture (arm64 or x86_64) based on environment variable
+  if(DEFINED ENV{CMAKE_OSX_ARCHITECTURES})
+    set(CMAKE_OSX_ARCHITECTURES $ENV{CMAKE_OSX_ARCHITECTURES})
+    message(STATUS "Target architecture: ${CMAKE_OSX_ARCHITECTURES}")
+  endif()
+
+  # Optimization flags for macOS arm64
+  if(CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
+    add_compile_options(-mcpu=apple-m1 -O3)
+  endif()
+
+elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  message(STATUS "Building for Linux")
+
+  # Optimization flags for Linux x86_64
+  add_compile_options(-march=native -O3)
+endif()
+
 # Find LLVM package
 find_package(LLVM REQUIRED CONFIG)
 

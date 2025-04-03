@@ -13,6 +13,11 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]  # Run on both Linux and macOS
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+          - os: macos-latest
+            target: arm64
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -59,7 +64,7 @@ jobs:
       - name: Clean and Rebuild
         run: |
           rm -rf build  # Delete old build artifacts
-          cmake -B build -S . -G Ninja
+          cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_OSX_ARCHITECTURES=${{ matrix.target }}
 
       - name: Debug Static Library Issues (if build fails)
         if: failure()
@@ -71,7 +76,5 @@ jobs:
 
       - name: Run Tests
         run: |
-          # move to the build directory
           cd build
-          # run the tests
           ninja run_all_tests
