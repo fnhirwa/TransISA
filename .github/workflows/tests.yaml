@@ -78,7 +78,7 @@ jobs:
 
       - name: Run Tests
         run: |
-          # move to the build directory
+          # Move to the build directory
           cd build
-          # run the tests
+          # Run the tests
           ninja run_all_tests
