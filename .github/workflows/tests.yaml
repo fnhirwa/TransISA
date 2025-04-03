@@ -59,13 +59,7 @@ jobs:
       - name: Clean and Rebuild
         run: |
           rm -rf build  # Delete old build artifacts
-          cmake -B build -S . -G Ninja \
-            -DCMAKE_C_COMPILER=$CC \
-            -DCMAKE_CXX_COMPILER=$CXX \
-            -DCMAKE_AR=$CMAKE_AR \
-            -DCMAKE_RANLIB=$CMAKE_RANLIB \
-            -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --verbose
+          cmake -B build -S . -G Ninja
 
       - name: Debug Static Library Issues (if build fails)
         if: failure()
