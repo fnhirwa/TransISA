@@ -2,11 +2,9 @@ name: Run Exhaustive Tests
 
 on:
   push:
-    branches:
-      - main
+    branches: [main]
   pull_request:
-    branches:
-      - main
+    branches: [main]
 
 jobs:
   run-tests:
@@ -23,62 +21,53 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libgtest-dev ninja-build llvm-19 llvm-19-dev clang-19 lld-19 lldb-19
-          
-          echo "LLVM_DIR=/usr/lib/llvm-19/cmake" >> $GITHUB_ENV
-          echo "CC=/usr/bin/clang-19" >> $GITHUB_ENV
-          echo "CXX=/usr/bin/clang++-19" >> $GITHUB_ENV
-          echo "CMAKE_AR=/usr/bin/llvm-ar-19" >> $GITHUB_ENV
-          echo "CMAKE_RANLIB=/usr/bin/llvm-ranlib-19" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=/usr/lib/llvm-19/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
-          echo "PATH=/usr/lib/llvm-19/bin:$PATH" >> $GITHUB_ENV
+          sudo apt-get install -y cmake ninja-build libgtest-dev
+          wget https://github.com/llvm/llvm-project/releases/download/llvmorg-19.1.6/clang+llvm-19.1.6-$(uname -m)-linux-gnu.tar.xz
+          tar xf clang+llvm-19.1.6-*-linux-gnu.tar.xz
+          sudo mv clang+llvm-19.1.6-*-linux-gnu /opt/llvm-19.1.6
+          echo "/opt/llvm-19.1.6/lib" | sudo tee /etc/ld.so.conf.d/llvm.conf
+          sudo ldconfig
+          echo "LLVM_DIR=/opt/llvm-19.1.6/lib/cmake/llvm" >> $GITHUB_ENV
+          echo "CC=/opt/llvm-19.1.6/bin/clang" >> $GITHUB_ENV
+          echo "CXX=/opt/llvm-19.1.6/bin/clang++" >> $GITHUB_ENV
+          echo "PATH=/opt/llvm-19.1.6/bin:$PATH" >> $GITHUB_ENV
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
           brew update
-          brew install cmake ninja llvm@19
-          
+          brew install cmake ninja
+          brew install llvm@19
           echo "LLVM_DIR=$(brew --prefix llvm@19)/lib/cmake/llvm" >> $GITHUB_ENV
           echo "CC=$(brew --prefix llvm@19)/bin/clang" >> $GITHUB_ENV
           echo "CXX=$(brew --prefix llvm@19)/bin/clang++" >> $GITHUB_ENV
-          echo "CMAKE_AR=$(brew --prefix llvm@19)/bin/llvm-ar" >> $GITHUB_ENV
-          echo "CMAKE_RANLIB=$(brew --prefix llvm@19)/bin/llvm-ranlib" >> $GITHUB_ENV
-          echo "DYLD_LIBRARY_PATH=$(brew --prefix llvm@19)/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "CMAKE_CXX_FLAGS=-stdlib=libc++ -isystem $(brew --prefix llvm@19)/include/c++/v1" >> $GITHUB_ENV
           echo "PATH=$(brew --prefix llvm@19)/bin:$PATH" >> $GITHUB_ENV
 
-      - name: Verify LLVM Installation
+      - name: Verify Toolchain
         run: |
-          echo "Using Clang version:"
-          clang --version
-          echo "Using LLVM version:"
-          llvm-config --version
-          echo "LLVM CXX Flags:"
-          llvm-config --cxxflags
+          echo "Clang version:"
+          $CC --version
+          echo "LLVM version:"
+          $CXX -print-resource-dir
+          echo "Include paths:"
+          $CXX -E -x c++ - -v < /dev/null 2>&1 | grep -A20 '#include <...>'
 
-      - name: Clean and Rebuild
+      - name: Configure with Isolated Headers
         run: |
-          rm -rf build  # Delete old build artifacts
           cmake -B build -S . -G Ninja \
             -DCMAKE_C_COMPILER=$CC \
             -DCMAKE_CXX_COMPILER=$CXX \
-            -DCMAKE_AR=$CMAKE_AR \
-            -DCMAKE_RANLIB=$CMAKE_RANLIB \
             -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES=$(brew --prefix llvm@19)/include/c++/v1
+            -DCMAKE_CXX_FLAGS="$CMAKE_CXX_FLAGS" \
+            -DLLVM_DIR=$LLVM_DIR \
+            -DCMAKE_CXX_STANDARD=17 \
+            -DCMAKE_CXX_STANDARD_REQUIRED=ON
+
+      - name: Build Project
+        run: |
           cmake --build build --verbose
 
-      - name: Debug Static Library Issues (if build fails)
-        if: failure()
-        run: |
-          file build/src/ir/libir_lib.a || echo "libir_lib.a not found"
-          file build/src/parser/libparser_lib.a || echo "libparser_lib.a not found"
-          nm -g build/src/ir/libir_lib.a || echo "No symbols in libir_lib.a"
-          nm -g build/src/parser/libparser_lib.a || echo "No symbols in libparser_lib.a"
-
       - name: Run Tests
-        run: |
-          # Move to the build directory
-          cd build
-          # Run the tests
-          ninja run_all_tests
+        working-directory: ./build
+        run: ctest --output-on-failure
