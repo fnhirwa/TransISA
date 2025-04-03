@@ -1,6 +1,7 @@
 #ifndef LLVMIRGENERATOR_H
 #define LLVMIRGENERATOR_H
 
+#include <cstddef>
 #include <functional>
 #include <iostream>
 #include <unordered_map>
