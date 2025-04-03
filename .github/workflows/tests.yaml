@@ -50,14 +50,29 @@ jobs:
       - name: Verify LLVM Installation
         run: |
           echo "Using Clang version:"
-          clang --version
+          $CC --version
           echo "Using LLVM version:"
           llvm-config --version
           echo "LLVM CXX Flags:"
           llvm-config --cxxflags
+          echo "Environment Variables:"
+          echo "CC=$CC"
+          echo "CXX=$CXX"
+          echo "LLVM_DIR=$LLVM_DIR"
+          echo "PATH=$PATH"
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH"
+          echo "DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH"
 
       - name: Clean and Rebuild
         run: |
+          export CC=$CC
+          export CXX=$CXX
+          export CMAKE_AR=$CMAKE_AR
+          export CMAKE_RANLIB=$CMAKE_RANLIB
+          export PATH=$PATH
+          export LD_LIBRARY_PATH=$LD_LIBRARY_PATH
+          export DYLD_LIBRARY_PATH=$DYLD_LIBRARY_PATH
+
           rm -rf build  # Delete old build artifacts
           cmake -B build -S . -G Ninja \
             -DCMAKE_C_COMPILER=$CC \
@@ -70,14 +85,10 @@ jobs:
       - name: Debug Static Library Issues (if build fails)
         if: failure()
         run: |
-          file build/src/ir/libir_lib.a || echo "libir_lib.a not found"
-          file build/src/parser/libparser_lib.a || echo "libparser_lib.a not found"
-          nm -g build/src/ir/libir_lib.a || echo "No symbols in libir_lib.a"
-          nm -g build/src/parser/libparser_lib.a || echo "No symbols in libparser_lib.a"
+          find build -name "*.a" -exec file {} \; || echo "No static libraries found"
+          find build -name "*.a" -exec nm -g {} \; || echo "No symbols in static libraries"
 
       - name: Run Tests
         run: |
-          # move to the build directory
           cd build
-          # run the tests
           ninja run_all_tests
