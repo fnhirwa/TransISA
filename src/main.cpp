@@ -35,9 +35,20 @@ void testIRGen(std::string_view source) {
   std::cout << "Generated AST:\n";
   root->print();
   // print the parsed labels
-  std::cout << "Parsed Labels:\n";
-  for (const auto& label : Parser::parserLabelMap) {
-    std::cout << "Label: " << label.first << "\n";
+  std::cout << "Parsed Functions:\n";
+  for (const auto& function : Parser::parserLabelMap) {
+    std::cout << "Function: " << function.first << "\n";
+    std::cout << "  Basic Blocks (" << function.second.size() << "):\n";
+    std::cout << "Associated Labels: ";
+    for (size_t i = 0; i < function.second.size(); ++i) {
+      if (function.second[i] != nullptr) {
+        std::cout << "    [" << i << "] " << function.second[i]->label << "\n";
+        // Add more BasicBlockNode fields if needed
+      } else {
+        std::cout << "    [" << i << "] nullptr\n";
+      }
+    }
+    std::cout << "\n";
   }
   // print the parsed functions
   std::cout << "Parsed Functions:\n";

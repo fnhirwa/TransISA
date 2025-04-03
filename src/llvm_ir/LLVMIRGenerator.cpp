@@ -67,12 +67,15 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
   //     Parser::parserLabelMap[labelName]));
   //   }
   // }
-  std::vector<std::pair<std::string, BasicBlockNode*>> labelVector(
-      Parser::parserLabelMap.begin(), Parser::parserLabelMap.end());
-
-  for (auto it = labelVector.rbegin(); it != labelVector.rend(); ++it) {
-    const std::string& labelName = it->first;
-
+  std::vector<BasicBlockNode*> labelVector;
+  for (const auto& function : Parser::parserLabelMap) {
+    std::string functionName = function.first;
+    if (functionName == node->name) {
+      labelVector = function.second;
+    }
+  }
+  for (size_t i = 0; i < labelVector.size(); ++i) {
+    const std::string& labelName = labelVector[i]->label;
     if (labelMap.find(labelName) == labelMap.end()) {
       // Create a new basic block for the label and add it to the labelMap
       llvm::BasicBlock* labelBB =

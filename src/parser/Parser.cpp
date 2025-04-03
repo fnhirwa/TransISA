@@ -27,7 +27,8 @@ Token Parser::consume() {
                                        0};
 }
 
-std::unordered_map<std::string, BasicBlockNode*> Parser::parserLabelMap;
+std::unordered_map<std::string, std::vector<BasicBlockNode*>>
+    Parser::parserLabelMap;
 std::unordered_map<std::string, FunctionNode*> Parser::parserFunctionMap;
 
 // Entry point for parsing
@@ -200,12 +201,12 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
       // Create a new BasicBlock for the label regardless of whether it's a
       // function
       if (currentBasicBlock) {
-        if (currentFunction)
+        if (currentFunction) {
           currentFunction->addBasicBlock(std::move(currentBasicBlock));
+        }
       }
       currentBasicBlock = std::make_unique<BasicBlockNode>(labelName);
-      parserLabelMap[labelName] = currentBasicBlock.get();
-
+      parserLabelMap[currentFunction->name].push_back(currentBasicBlock.get());
       consume();
     }
 

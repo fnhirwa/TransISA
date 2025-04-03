@@ -22,8 +22,9 @@ class Parser {
  public:
   explicit Parser(std::vector<Token> tokens);
   std::unique_ptr<RootNode> parse();
-  // label map to store the label and its corresponding basic block
-  static std::unordered_map<std::string, BasicBlockNode*> parserLabelMap;
+  // label map to store the function Node name and its corresponding basic block
+  static std::unordered_map<std::string, std::vector<BasicBlockNode*>>
+      parserLabelMap;
   // list of functions this will be updated when we encounter a call instruction
   static std::unordered_map<std::string, FunctionNode*> parserFunctionMap;
 
