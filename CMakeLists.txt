@@ -9,6 +9,14 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
 
+if(APPLE)
+  # Use a CMake variable instead of shell command
+  include_directories(SYSTEM "${LLVM_INCLUDE_DIR}/c++/v1")
+  link_directories("${LLVM_LIB_DIR}")
+  add_compile_options(-stdlib=libc++)
+  add_link_options(-stdlib=libc++)
+endif()
+
 # include directory
 include_directories(include)
 
