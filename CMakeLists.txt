@@ -9,6 +9,8 @@ if(NOT CMAKE_BUILD_TYPE)
   set(CMAKE_BUILD_TYPE Debug)
 endif()
 
+include_directories(SYSTEM /opt/homebrew/opt/llvm@19/include/c++/v1)
+include_directories(SYSTEM /opt/homebrew/include)
 # include directory
 include_directories(include)
 
