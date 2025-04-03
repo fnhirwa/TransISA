@@ -1,5 +1,30 @@
 # Set LLVM directory
-set(LLVM_DIR "/usr/local/lib/cmake/llvm")
+if(APPLE)
+  # macOS - Homebrew installation (Apple Silicon or Intel)
+  if(EXISTS "/opt/homebrew/opt/llvm@19/lib/cmake/llvm")
+    set(LLVM_DIR "/opt/homebrew/opt/llvm@19/lib/cmake/llvm")
+  elseif(EXISTS "/usr/local/opt/llvm@19/lib/cmake/llvm")
+    set(LLVM_DIR "/usr/local/opt/llvm@19/lib/cmake/llvm")
+  endif()
+elseif(UNIX AND NOT APPLE)
+  # Linux - Check common installation paths
+  if(EXISTS "/usr/lib/llvm-19/lib/cmake/llvm")
+    set(LLVM_DIR "/usr/lib/llvm-19/lib/cmake/llvm")
+  elseif(EXISTS "/usr/local/lib/llvm-19/lib/cmake/llvm")
+    set(LLVM_DIR "/usr/local/lib/llvm-19/lib/cmake/llvm")
+  elseif(EXISTS "/usr/lib/llvm/lib/cmake/llvm")
+    set(LLVM_DIR "/usr/lib/llvm/lib/cmake/llvm")
+  elseif(EXISTS "/usr/local/lib/cmake/llvm")
+    set(LLVM_DIR "/usr/local/lib/cmake/llvm")
+  endif()
+endif()
+
+if(NOT DEFINED LLVM_DIR)
+  message(
+    FATAL_ERROR
+      "LLVM directory not found. Set LLVM_DIR manually or install LLVM properly."
+  )
+endif()
 
 # Find LLVM package
 find_package(LLVM REQUIRED CONFIG)
