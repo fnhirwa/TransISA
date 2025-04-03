@@ -1,4 +1,5 @@
 name: Run Exhaustive Tests
+
 on:
   push:
     branches:
@@ -6,15 +7,18 @@ on:
   pull_request:
     branches:
       - main
+
 jobs:
   run-tests:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]  # Run on both Linux and macOS
     runs-on: ${{ matrix.os }}
+
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
+
       - name: Install dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
@@ -28,6 +32,7 @@ jobs:
           echo "CMAKE_RANLIB=/usr/bin/llvm-ranlib-19" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=/usr/lib/llvm-19/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
           echo "PATH=/usr/lib/llvm-19/bin:$PATH" >> $GITHUB_ENV
+
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
         run: |
@@ -41,13 +46,7 @@ jobs:
           echo "CMAKE_RANLIB=$(brew --prefix llvm@19)/bin/llvm-ranlib" >> $GITHUB_ENV
           echo "DYLD_LIBRARY_PATH=$(brew --prefix llvm@19)/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
           echo "PATH=$(brew --prefix llvm@19)/bin:$PATH" >> $GITHUB_ENV
-          
-          # Fix for macOS libc++ headers issue
-          LLVM_PREFIX=$(brew --prefix llvm@19)
-          echo "CPLUS_INCLUDE_PATH=${LLVM_PREFIX}/include/c++/v1:${CPLUS_INCLUDE_PATH}" >> $GITHUB_ENV
-          echo "C_INCLUDE_PATH=${LLVM_PREFIX}/include:${C_INCLUDE_PATH}" >> $GITHUB_ENV
-          echo "CXXFLAGS=-isystem ${LLVM_PREFIX}/include/c++/v1 -stdlib=libc++" >> $GITHUB_ENV
-          echo "LDFLAGS=-L${LLVM_PREFIX}/lib -Wl,-rpath,${LLVM_PREFIX}/lib" >> $GITHUB_ENV
+
       - name: Verify LLVM Installation
         run: |
           echo "Using Clang version:"
@@ -56,8 +55,7 @@ jobs:
           llvm-config --version
           echo "LLVM CXX Flags:"
           llvm-config --cxxflags
-          echo "Environment variables:"
-          env | grep -E 'CPLUS|C_INCLUDE|CXXFLAGS|LDFLAGS|LLVM'
+
       - name: Clean and Rebuild
         run: |
           rm -rf build  # Delete old build artifacts
@@ -66,10 +64,9 @@ jobs:
             -DCMAKE_CXX_COMPILER=$CXX \
             -DCMAKE_AR=$CMAKE_AR \
             -DCMAKE_RANLIB=$CMAKE_RANLIB \
-            -DCMAKE_BUILD_TYPE=Release \
-            -DCMAKE_CXX_STANDARD=17 \
-            -DCMAKE_CXX_STANDARD_REQUIRED=ON
+            -DCMAKE_BUILD_TYPE=Release
           cmake --build build --verbose
+
       - name: Debug Static Library Issues (if build fails)
         if: failure()
         run: |
@@ -77,6 +74,7 @@ jobs:
           file build/src/parser/libparser_lib.a || echo "libparser_lib.a not found"
           nm -g build/src/ir/libir_lib.a || echo "No symbols in libir_lib.a"
           nm -g build/src/parser/libparser_lib.a || echo "No symbols in libparser_lib.a"
+
       - name: Run Tests
         run: |
           # move to the build directory
