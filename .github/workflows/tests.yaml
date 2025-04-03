@@ -65,6 +65,15 @@ jobs:
         run: |
           rm -rf build  # Delete old build artifacts
           cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_OSX_ARCHITECTURES=${{ matrix.target }}
+        env:
+          LLVM_DIR: ${{ env.LLVM_DIR }}
+          CC: ${{ env.CC }}
+          CXX: ${{ env.CXX }}
+          CMAKE_AR: ${{ env.CMAKE_AR }}
+          CMAKE_RANLIB: ${{ env.CMAKE_RANLIB }}
+          PATH: ${{ env.PATH }}
+          LD_LIBRARY_PATH: ${{ env.LD_LIBRARY_PATH }}
+          DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH }}
 
       - name: Debug Static Library Issues (if build fails)
         if: failure()
