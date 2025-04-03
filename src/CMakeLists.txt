@@ -1,30 +1,18 @@
-# Automatically detect LLVM installation path
-if(EXISTS "/usr/local/lib/cmake/llvm") # Standard installation path (Linux &
-                                       # macOS)
-  set(LLVM_DIR "/usr/local/lib/cmake/llvm")
-  message(STATUS "Using LLVM from standard installation at /usr/local")
-elseif(EXISTS "/opt/homebrew/opt/llvm/lib/cmake/llvm") # macOS (Homebrew on
-                                                       # Apple Silicon)
-  set(LLVM_DIR "/opt/homebrew/opt/llvm/lib/cmake/llvm")
-  message(
-    STATUS "Using LLVM from Homebrew installation at /opt/homebrew/opt/llvm")
+# First try the automatic method
+find_package(LLVM CONFIG QUIET)
 
-elseif(EXISTS "/usr/lib/llvm-19/lib/cmake/llvm") # Typical Linux path (e.g.,
-                                                 # Ubuntu/Debian with apt
-                                                 # install)
-  set(LLVM_DIR "/usr/lib/llvm-19/lib/cmake/llvm")
-  message(STATUS "Using LLVM from system installation at /usr/lib/llvm-19")
+if(NOT LLVM_FOUND)
+  # Fall back to hardcoded paths if automatic detection fails
+  message(WARNING "Automatic LLVM detection failed, trying known paths...")
 
-elseif(EXISTS "/usr/lib/llvm/lib/cmake/llvm") # Generic Linux path (Arch Linux,
-                                              # etc.)
-  set(LLVM_DIR "/usr/lib/llvm/lib/cmake/llvm")
-  message(STATUS "Using LLVM from system installation at /usr/lib/llvm")
+  set(LLVM_PATHS
+      "/opt/homebrew/opt/llvm/lib/cmake/llvm" "/usr/local/lib/cmake/llvm"
+      "/usr/lib/llvm-19/lib/cmake/llvm" "/usr/lib/llvm/lib/cmake/llvm")
 
-else()
-  message(
-    FATAL_ERROR "Could not find LLVM installation. Make sure LLVM is installed."
-  )
+  find_package(LLVM CONFIG REQUIRED PATHS ${LLVM_PATHS} NO_DEFAULT_PATH)
 endif()
+
+message(STATUS "Found LLVM ${LLVM_VERSION} at ${LLVM_DIR}")
 
 # Find LLVM package
 find_package(LLVM REQUIRED CONFIG)
