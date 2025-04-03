@@ -1,15 +1,28 @@
-# Check if LLVM is installed via Homebrew (common on macOS M1/M2)
-if(EXISTS "/usr/local/lib/cmake/llvm")
+# Automatically detect LLVM installation path
+if(EXISTS "/usr/local/lib/cmake/llvm") # Standard installation path (Linux &
+                                       # macOS)
   set(LLVM_DIR "/usr/local/lib/cmake/llvm")
   message(STATUS "Using LLVM from standard installation at /usr/local")
-elseif(EXISTS "/opt/homebrew/opt/llvm/lib/cmake/llvm")
+elseif(EXISTS "/opt/homebrew/opt/llvm/lib/cmake/llvm") # macOS (Homebrew on
+                                                       # Apple Silicon)
   set(LLVM_DIR "/opt/homebrew/opt/llvm/lib/cmake/llvm")
   message(
     STATUS "Using LLVM from Homebrew installation at /opt/homebrew/opt/llvm")
+
+elseif(EXISTS "/usr/lib/llvm-19/lib/cmake/llvm") # Typical Linux path (e.g.,
+                                                 # Ubuntu/Debian with apt
+                                                 # install)
+  set(LLVM_DIR "/usr/lib/llvm-19/lib/cmake/llvm")
+  message(STATUS "Using LLVM from system installation at /usr/lib/llvm-19")
+
+elseif(EXISTS "/usr/lib/llvm/lib/cmake/llvm") # Generic Linux path (Arch Linux,
+                                              # etc.)
+  set(LLVM_DIR "/usr/lib/llvm/lib/cmake/llvm")
+  message(STATUS "Using LLVM from system installation at /usr/lib/llvm")
+
 else()
   message(
-    FATAL_ERROR
-      "Could not find LLVM installation. Make sure LLVM is installed via Homebrew or in /usr/local."
+    FATAL_ERROR "Could not find LLVM installation. Make sure LLVM is installed."
   )
 endif()
 
