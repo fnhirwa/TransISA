@@ -1,7 +1,3 @@
-#include <iostream>
-
-#include "llvm/IR/InlineAsm.h"
-#include "llvm/IR/Verifier.h"
 #include "llvm_ir/LLVMIRGenerator.h"
 
 // This module object is used to store all the IR generated
