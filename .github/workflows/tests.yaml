@@ -43,7 +43,6 @@ jobs:
         run: |
           brew update
           brew install cmake ninja llvm@19
-          
           echo "LLVM_DIR=$(brew --prefix llvm@19)/lib/cmake/llvm" >> $GITHUB_ENV
           echo "CC=$(brew --prefix llvm@19)/bin/clang" >> $GITHUB_ENV
           echo "CXX=$(brew --prefix llvm@19)/bin/clang++" >> $GITHUB_ENV
@@ -51,6 +50,12 @@ jobs:
           echo "CMAKE_RANLIB=$(brew --prefix llvm@19)/bin/llvm-ranlib" >> $GITHUB_ENV
           echo "DYLD_LIBRARY_PATH=$(brew --prefix llvm@19)/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
           echo "PATH=$(brew --prefix llvm@19)/bin:$PATH" >> $GITHUB_ENV
+          # Add these new environment variables
+          echo "CPLUS_INCLUDE_PATH=$(brew --prefix llvm@19)/include/c++/v1:$CPLUS_INCLUDE_PATH" >> $GITHUB_ENV
+          echo "C_INCLUDE_PATH=$(brew --prefix llvm@19)/include:$C_INCLUDE_PATH" >> $GITHUB_ENV
+          # This flag tells clang to use the libc++ that comes with LLVM instead of the system one
+          echo "CXXFLAGS=-stdlib=libc++" >> $GITHUB_ENV
+          echo "LDFLAGS=-L$(brew --prefix llvm@19)/lib -Wl,-rpath,$(brew --prefix llvm@19)/lib" >> $GITHUB_ENV
 
       - name: Verify LLVM Installation
         run: |
@@ -63,8 +68,12 @@ jobs:
 
       - name: Clean and Rebuild
         run: |
-          rm -rf build  # Delete old build artifacts
-          cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Debug -DCMAKE_OSX_ARCHITECTURES=${{ matrix.target }}
+          rm -rf build # Delete old build artifacts
+          cmake -B build -S . -G Ninja -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.target }} \
+            -DCMAKE_CXX_FLAGS="${CXXFLAGS}" \
+            -DCMAKE_EXE_LINKER_FLAGS="${LDFLAGS}" \
+            -DCMAKE_SHARED_LINKER_FLAGS="${LDFLAGS}"
         env:
           LLVM_DIR: ${{ env.LLVM_DIR }}
           CC: ${{ env.CC }}
@@ -74,6 +83,10 @@ jobs:
           PATH: ${{ env.PATH }}
           LD_LIBRARY_PATH: ${{ env.LD_LIBRARY_PATH }}
           DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH }}
+          CPLUS_INCLUDE_PATH: ${{ env.CPLUS_INCLUDE_PATH }}
+          C_INCLUDE_PATH: ${{ env.C_INCLUDE_PATH }}
+          CXXFLAGS: ${{ env.CXXFLAGS }}
+          LDFLAGS: ${{ env.LDFLAGS }}
 
       - name: Debug Static Library Issues (if build fails)
         if: failure()
