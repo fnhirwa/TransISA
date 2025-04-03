@@ -13,6 +13,11 @@ jobs:
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest]  # Run on both Linux and macOS
+        include:
+          - os: ubuntu-latest
+            target: x86_64
+          - os: macos-latest
+            target: arm64
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -39,13 +44,21 @@ jobs:
           brew update
           brew install cmake ninja llvm@19
           
-          echo "LLVM_DIR=$(brew --prefix llvm@19)/lib/cmake/llvm" >> $GITHUB_ENV
-          echo "CC=$(brew --prefix llvm@19)/bin/clang" >> $GITHUB_ENV
-          echo "CXX=$(brew --prefix llvm@19)/bin/clang++" >> $GITHUB_ENV
-          echo "CMAKE_AR=$(brew --prefix llvm@19)/bin/llvm-ar" >> $GITHUB_ENV
-          echo "CMAKE_RANLIB=$(brew --prefix llvm@19)/bin/llvm-ranlib" >> $GITHUB_ENV
-          echo "DYLD_LIBRARY_PATH=$(brew --prefix llvm@19)/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
-          echo "PATH=$(brew --prefix llvm@19)/bin:$PATH" >> $GITHUB_ENV
+          # Store LLVM path for easy reference
+          LLVM_PREFIX=$(brew --prefix llvm@19)
+          
+          # Set up environment variables
+          echo "LLVM_DIR=${LLVM_PREFIX}/lib/cmake/llvm" >> $GITHUB_ENV
+          echo "CC=${LLVM_PREFIX}/bin/clang" >> $GITHUB_ENV
+          echo "CXX=${LLVM_PREFIX}/bin/clang++" >> $GITHUB_ENV
+          
+          # Critical fix - set compiler flags to use LLVM's libc++ instead of system
+          echo "CXXFLAGS=-stdlib=libc++ -nostdinc++ -I${LLVM_PREFIX}/include/c++/v1 -I${LLVM_PREFIX}/include" >> $GITHUB_ENV
+          echo "LDFLAGS=-L${LLVM_PREFIX}/lib -Wl,-rpath,${LLVM_PREFIX}/lib" >> $GITHUB_ENV
+          
+          # Set other required paths
+          echo "PATH=${LLVM_PREFIX}/bin:$PATH" >> $GITHUB_ENV
+          echo "DYLD_LIBRARY_PATH=${LLVM_PREFIX}/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
 
       - name: Verify LLVM Installation
         run: |
@@ -58,14 +71,25 @@ jobs:
 
       - name: Clean and Rebuild
         run: |
-          rm -rf build  # Delete old build artifacts
+          rm -rf build # Delete old build artifacts
+          
+          # Create a verbose CMake command with all needed flags
           cmake -B build -S . -G Ninja \
-            -DCMAKE_C_COMPILER=$CC \
-            -DCMAKE_CXX_COMPILER=$CXX \
-            -DCMAKE_AR=$CMAKE_AR \
-            -DCMAKE_RANLIB=$CMAKE_RANLIB \
-            -DCMAKE_BUILD_TYPE=Release
-          cmake --build build --verbose
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.target }} \
+            -DCMAKE_CXX_FLAGS="${CXXFLAGS}" \
+            -DCMAKE_C_FLAGS="${CFLAGS}" \
+            -DCMAKE_EXE_LINKER_FLAGS="${LDFLAGS}" \
+            -DCMAKE_SHARED_LINKER_FLAGS="${LDFLAGS}" \
+            -DCMAKE_MODULE_LINKER_FLAGS="${LDFLAGS}"
+        env:
+          LLVM_DIR: ${{ env.LLVM_DIR }}
+          CC: ${{ env.CC }}
+          CXX: ${{ env.CXX }}
+          CXXFLAGS: ${{ env.CXXFLAGS }}
+          LDFLAGS: ${{ env.LDFLAGS }}
+          PATH: ${{ env.PATH }}
+          DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH }}
 
       - name: Debug Static Library Issues (if build fails)
         if: failure()
@@ -77,7 +101,5 @@ jobs:
 
       - name: Run Tests
         run: |
-          # move to the build directory
           cd build
-          # run the tests
           ninja run_all_tests
