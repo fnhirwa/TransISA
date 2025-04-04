@@ -1,8 +1,11 @@
 #ifndef LLVMIRGENERATOR_H
 #define LLVMIRGENERATOR_H
 
+#include <cstddef>
 #include <functional>
+#include <iostream>
 #include <unordered_map>
+
 #include "llvm/IR/BasicBlock.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/IRBuilder.h"
@@ -12,13 +15,26 @@
 #include "llvm/IR/Verifier.h"
 #include "parser/Parser.h"
 
+struct TrackCPUState {
+  llvm::Value* zeroFlag; // Set if result is zero
+  llvm::Value* signFlag; // Set if result is negative
+  llvm::Value* carryFlag; // For unsigned comparisons
+  llvm::Value* overflowFlag; // For signed comparisons
+  TrackCPUState()
+      : zeroFlag(nullptr), signFlag(nullptr), carryFlag(nullptr),
+        overflowFlag(nullptr) {}
+};
+
 class LLVMIRGen {
  private:
   llvm::LLVMContext context;
   llvm::Module module;
   llvm::IRBuilder<> builder;
   std::unordered_map<std::string, llvm::Value*> namedValues;
-  // Define lookup table mapping x86 opcodes to LLVM IR generation functions
+  std::unordered_map<std::string, llvm::BasicBlock*> labelMap;
+  // predefined functions for lookup
+  std::unordered_map<std::string, llvm::Function*> definedFunctionsMap;
+  std::unordered_map<std::string, std::string> entryBlockNames;
   std::unordered_map<
       std::string,
       std::function<
@@ -67,6 +83,45 @@ class LLVMIRGen {
                  lhs, rhs, "sartmp"); // Arithmetic shift right
            }},
   };
+  // Lookup table for comparison operations (cmp, test, etc.)
+  // This is a simplified version and may not cover all x86 comparison
+  // instructions.
+  std::unordered_map<
+      std::string,
+      std::function<
+          llvm::Value*(llvm::IRBuilder<>&, llvm::Value*, llvm::Value*)>>
+      cmpOpTable = {
+          {"cmp",
+           [](llvm::IRBuilder<>& builder, llvm::Value* lhs, llvm::Value* rhs) {
+             return builder.CreateICmpEQ(lhs, rhs, "cmptmp");
+           }},
+          {"test",
+           [](llvm::IRBuilder<>& builder, llvm::Value* lhs, llvm::Value* rhs) {
+             return builder.CreateICmpEQ(lhs, rhs, "testtmp");
+           }},
+  };
+
+  // Table for jump instructions for O(1) lookup.
+  std::unordered_map<std::string, std::string> jumpOpTable = {
+      {"jmp", "unconditional"},
+      {"je", "equal"},
+      {"jne", "not_equal"},
+      {"jg", "greater"},
+      {"jge", "greater_equal"},
+      {"jl", "less"},
+      {"jle", "less_equal"},
+      {"ja", "above"},
+      {"jz", "zero"},
+      {"jnz", "not_zero"},
+      {"jo", "overflow"},
+      {"jno", "no_overflow"},
+      {"js", "sign"},
+      {"jns", "no_sign"},
+      {"jae", "above_equal"},
+      {"jb", "below"},
+      {"jbe", "below_equal"},
+  };
+  TrackCPUState ContextCPUState;
 
  public:
   LLVMIRGen() : module("TransISA", context), builder(context) {}
@@ -83,9 +138,14 @@ class LLVMIRGen {
   void handleSyscallInstructionNode(InstructionNode* node);
   void handleIntInstructionNode(InstructionNode* node);
   void handleRetInstructionNode(InstructionNode* node);
+  void handlCompareInstructionNode(InstructionNode* node);
+  void handleBranchingInstructions(InstructionNode* node);
+  void handleLoopInstructionNode(InstructionNode* node);
+  void handleCallInstructionNode(InstructionNode* node);
 
   // some memory related functions
   llvm::Value* handleDestinationMemory(MemoryNode* destMem);
   llvm::Value* handleSourceMemory(MemoryNode* srcMem);
+  llvm::Value* castInputTypes(ASTNode* inputNode, const std::string nodeType);
 };
 #endif // LLVMIRGENERATOR_H

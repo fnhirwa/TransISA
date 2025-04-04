@@ -1,4 +1,5 @@
 #include "parser/Parser.h"
+#include <unordered_set>
 
 // Constructor: Initializes the parser with tokens
 Parser::Parser(std::vector<Token> tokens)
@@ -25,6 +26,10 @@ Token Parser::consume() {
                                        tokens[tokens.size() - 1].line + 1,
                                        0};
 }
+
+std::unordered_map<std::string, std::vector<BasicBlockNode*>>
+    Parser::parserLabelMap;
+std::unordered_map<std::string, FunctionNode*> Parser::parserFunctionMap;
 
 // Entry point for parsing
 std::unique_ptr<RootNode> Parser::parse() {
@@ -158,40 +163,61 @@ void Parser::parseBssSection(std::unique_ptr<RootNode>& root) {
   }
 }
 
-// Parse the .text section (functions & instructions)
+static std::unordered_set<std::string>
+    calledFunctions; // Track called functions
+
 void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
-  std::unique_ptr<FunctionNode> function = nullptr;
-  std::unique_ptr<BasicBlockNode> basicBlock = nullptr;
+  std::unique_ptr<FunctionNode> currentFunction = nullptr;
+  std::unique_ptr<BasicBlockNode> currentBasicBlock = nullptr;
 
   while (index < tokens.size()) {
     Token currentToken = peek();
 
-    // **Check for a new section and exit immediately**
     if (currentToken.type == TokenType::SEGMENT_DIRECTIVE) {
-      break; // Exit parsing the .text section
+      break;
     }
 
-    // Handle function labels
     if (currentToken.type == TokenType::LABEL) {
-      if (function) {
-        function->addBasicBlock(std::move(basicBlock));
-        root->addBasicBlock(std::move(function)); // Finalize previous function
+      std::string labelName = currentToken.value;
+
+      // Only treat as a function if it's called or it's the entry point
+      bool isFunction =
+          (labelName == "_start" || calledFunctions.count(labelName) > 0);
+
+      if (isFunction) {
+        if (parserFunctionMap.find(labelName) == parserFunctionMap.end()) {
+          if (currentFunction) {
+            if (currentBasicBlock) {
+              currentFunction->addBasicBlock(std::move(currentBasicBlock));
+            }
+            root->addBasicBlock(std::move(currentFunction));
+          }
+
+          currentFunction = std::make_unique<FunctionNode>(labelName);
+          parserFunctionMap[labelName] = currentFunction.get();
+        }
       }
-      function = std::make_unique<FunctionNode>(currentToken.value);
-      basicBlock = std::make_unique<BasicBlockNode>("entry");
+
+      // Create a new BasicBlock for the label regardless of whether it's a
+      // function
+      if (currentBasicBlock) {
+        if (currentFunction) {
+          currentFunction->addBasicBlock(std::move(currentBasicBlock));
+        }
+      }
+      currentBasicBlock = std::make_unique<BasicBlockNode>(labelName);
+      parserLabelMap[currentFunction->name].push_back(currentBasicBlock.get());
       consume();
     }
 
-    // Handle instructions
     else if (currentToken.type == TokenType::INSTRUCTION) {
       std::string opcode = consume().value;
       std::vector<std::unique_ptr<ASTNode>> operands;
 
-      // Parse operands
       while (peek().type != TokenType::INSTRUCTION &&
              peek().type != TokenType::LABEL &&
              peek().type != TokenType::SEGMENT_DIRECTIVE &&
-             peek().type != TokenType::END) { // **Check for new section**
+             peek().type != TokenType::END) {
         Token operandToken = consume();
         std::string numberType = detectNumberType(operandToken.value);
 
@@ -207,51 +233,46 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
         } else if (operandToken.type == TokenType::STRING) {
           operands.push_back(std::make_unique<StringNode>(operandToken.value));
         } else if (operandToken.type == TokenType::COMMA) {
-          continue; // Skip commas
-        } else if (operandToken.type == TokenType::L_BRACKET) {
-          // we have indirect memory access
-          std::string base =
-              consume().value; // base register or memory location
-          std::string offset = "";
-          bool isIndirect = true;
-          if (peek().value == "+") {
-            consume(); // consume '+'
-            offset = consume().value; // offset
-          }
-          consume(); // consume ']'
-          operands.push_back(
-              std::make_unique<MemoryNode>(base, offset, isIndirect));
-        } else if (operandToken.type == TokenType::IDENTIFIER) // treate is as a
-                                                               // memory address
-                                                               // of some global
-                                                               // variable
-        {
+          continue;
+        } else if (
+            operandToken.value == "byte" || operandToken.value == "word" ||
+            operandToken.value == "dword" || operandToken.value == "qword") {
+          continue;
+        } else if (operandToken.type == TokenType::IDENTIFIER) {
           operands.push_back(
               std::make_unique<MemoryNode>(operandToken.value, "", false));
-        } else {
-          consume(); // Skip unknown tokens
         }
       }
 
-      // Add instruction to the basic block
+      if (opcode == "call") {
+        // Track called function name
+        if (!operands.empty()) {
+          auto* memoryNode = dynamic_cast<MemoryNode*>(operands[0].get());
+          if (memoryNode) {
+            calledFunctions.insert(memoryNode->base); // Mark as a function
+          }
+        }
+      }
+
       auto instr =
           std::make_unique<InstructionNode>(opcode, std::move(operands));
-      basicBlock->addBasicBlock(std::move(instr));
+      currentBasicBlock->addBasicBlock(std::move(instr));
     }
 
     else if (currentToken.type == TokenType::END) {
-      break; // End of tokens
+      break;
     }
 
     else {
-      consume(); // Skip unknown tokens
+      consume();
     }
   }
 
-  // Finalize any remaining function
-  if (function) {
-    function->addBasicBlock(std::move(basicBlock));
-    root->addBasicBlock(std::move(function));
+  if (currentFunction) {
+    if (currentBasicBlock) {
+      currentFunction->addBasicBlock(std::move(currentBasicBlock));
+    }
+    root->addBasicBlock(std::move(currentFunction));
   }
 }
 
