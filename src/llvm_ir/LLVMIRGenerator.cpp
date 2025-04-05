@@ -701,8 +701,6 @@ llvm::Value* LLVMIRGen::handleDestinationMemory(MemoryNode* destMem) {
 
 void LLVMIRGen::handleSyscallInstructionNode(InstructionNode* node) {}
 
-void LLVMIRGen::handleRetInstructionNode(InstructionNode* node) {}
-
 llvm::Value* LLVMIRGen::castInputTypes(
     ASTNode* inputNode,
     const std::string nodeType) {
@@ -1011,3 +1009,118 @@ void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {
 }
 
 void LLVMIRGen::handleLoopInstructionNode(InstructionNode* node) {}
+
+void LLVMIRGen::handlePushInstructionNode(InstructionNode* node) {
+  if (node->operands.empty()) {
+    std::cerr << "Error: No operand found for 'push'\n";
+    return;
+  }
+  auto* pushReg = dynamic_cast<RegisterNode*>(node->operands[0].get());
+  if (!pushReg) {
+    std::cerr << "Error: Invalid register type for 'push' instruction\n";
+    return;
+  }
+  // Check if the register is already allocated
+  if (namedValues.find(pushReg->registerName) == namedValues.end()) {
+    std::cerr << "Error: Register " << pushReg->registerName
+              << " not allocated\n";
+    return;
+  }
+  llvm::Value* valueToPush = castInputTypes(
+      node->operands[0].get(), check_operandType(node->operands[0].get()));
+  if (!valueToPush) {
+    std::cerr << "Error: Failed to generate operand for 'push'\n";
+    return;
+  }
+
+  // Allocate a stack slot using alloca
+  llvm::AllocaInst* stackSlot =
+      builder.CreateAlloca(valueToPush->getType(), nullptr, "stackslot");
+
+  // Store the value into the allocated stack slot
+  builder.CreateStore(valueToPush, stackSlot);
+
+  // Optionally, you can store stackSlot in a map if you need to track it later
+  stackMap[pushReg->registerName] = stackSlot;
+  // Update the stack pointer (ESP/RSP) if needed
+  llvm::Value* stackPointer = namedValues["rsp"];
+  if (!stackPointer) {
+    std::cerr << "Error: Stack pointer not found\n";
+    return;
+  }
+  llvm::Value* newStackPointer = builder.CreateSub(
+      stackPointer,
+      llvm::ConstantInt::get(context, llvm::APInt(32, 4)),
+      "new_rsp");
+  builder.CreateStore(newStackPointer, namedValues["rsp"]);
+  // Update the stack pointer in namedValues
+  namedValues["rsp"] = newStackPointer;
+}
+
+void LLVMIRGen::handlePopInstructionNode(InstructionNode* node) {
+  if (node->operands.empty()) {
+    std::cerr << "Error: No operand found for 'pop'\n";
+    return;
+  }
+  auto* popReg = dynamic_cast<RegisterNode*>(node->operands[0].get());
+  if (!popReg) {
+    std::cerr << "Error: Invalid register type for 'pop' instruction\n";
+    return;
+  }
+
+  auto it = stackMap.find(popReg->registerName);
+  if (it == stackMap.end()) {
+    std::cerr << "Error: Stack slot not found for 'pop'\n";
+    return;
+  }
+
+  llvm::AllocaInst* stackSlot = it->second;
+
+  // Load the value from the stack slot
+  llvm::Value* value =
+      builder.CreateLoad(stackSlot->getAllocatedType(), stackSlot, "pop_value");
+
+  // Optionally, you can erase the stack slot from the map after the pop
+  stackMap.erase(it);
+}
+
+void LLVMIRGen::handleRetInstructionNode(InstructionNode* node) {
+  if (node->operands.empty()) {
+    builder.CreateRetVoid();
+  } else {
+    if (node->operands.size() != 1) {
+      std::cerr << "Error: 'ret' instruction requires exactly one operand\n";
+      return;
+    }
+    auto* returnTarget = dynamic_cast<MemoryNode*>(node->operands[0].get());
+    if (!returnTarget) {
+      std::cerr << "Error: Invalid return type for 'ret' instruction\n";
+      return;
+    }
+    llvm::Value* retVal = nullptr;
+    if (returnTarget->base == "eax") {
+      retVal = namedValues["eax"];
+    } else if (returnTarget->base == "rax") {
+      retVal = namedValues["rax"];
+    } else {
+      std::cerr << "Error: Unsupported return target: " << returnTarget->base
+                << "\n";
+      return;
+    }
+    if (!retVal) {
+      std::cerr << "Error: Return value not found\n";
+      return;
+    }
+    // Create a return instruction
+    llvm::Function* function = builder.GetInsertBlock()->getParent();
+    if (!function) {
+      std::cerr << "Error: No parent function for 'ret' instruction\n";
+      return;
+    }
+    llvm::BasicBlock* exitBlock =
+        llvm::BasicBlock::Create(context, "exit", function);
+    builder.CreateBr(exitBlock);
+    builder.SetInsertPoint(exitBlock);
+    builder.CreateRet(retVal);
+  }
+}

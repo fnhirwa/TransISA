@@ -35,6 +35,7 @@ class LLVMIRGen {
   // predefined functions for lookup
   std::unordered_map<std::string, llvm::Function*> definedFunctionsMap;
   std::unordered_map<std::string, std::string> entryBlockNames;
+  std::unordered_map<std::string, llvm::AllocaInst*> stackMap;
   std::unordered_map<
       std::string,
       std::function<
@@ -137,11 +138,13 @@ class LLVMIRGen {
   void handleLeaInstructionNode(InstructionNode* node);
   void handleSyscallInstructionNode(InstructionNode* node);
   void handleIntInstructionNode(InstructionNode* node);
-  void handleRetInstructionNode(InstructionNode* node);
   void handlCompareInstructionNode(InstructionNode* node);
   void handleBranchingInstructions(InstructionNode* node);
   void handleLoopInstructionNode(InstructionNode* node);
   void handleCallInstructionNode(InstructionNode* node);
+  void handlePushInstructionNode(InstructionNode* node);
+  void handlePopInstructionNode(InstructionNode* node);
+  void handleRetInstructionNode(InstructionNode* node);
 
   // some memory related functions
   llvm::Value* handleDestinationMemory(MemoryNode* destMem);
