@@ -126,6 +126,9 @@ class LLVMIRGen {
  public:
   LLVMIRGen() : module("TransISA", context), builder(context) {}
   llvm::Module* generateIR(std::unique_ptr<ASTNode>& root);
+  llvm::Module* getModule() {
+    return &module;
+  }
   void visitGlobalVariableNode(GlobalVariableNode* node);
   void visitFunctionNode(FunctionNode* node);
   void visitBasicBlockNode(BasicBlockNode* node);

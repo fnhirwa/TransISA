@@ -62,7 +62,21 @@ include_directories(${LLVM_INCLUDE_DIRS})
 add_definitions(${LLVM_DEFINITIONS})
 
 # Map LLVM components to library names
-llvm_map_components_to_libnames(LLVM_LIBS support core irreader mc scalaropts)
+llvm_map_components_to_libnames(
+  LLVM_LIBS
+  core
+  support
+  irreader
+  mc
+  target
+  aarch64codegen
+  aarch64desc
+  aarch64asmparser
+  aarch64disassembler
+  aarch64info
+  aarch64utils
+  asmprinter
+  bitwriter)
 
 # Add include directories
 include_directories(${CMAKE_SOURCE_DIR}/include)
@@ -70,11 +84,11 @@ include_directories(${CMAKE_SOURCE_DIR}/include)
 # subdirectories
 add_subdirectory(lexer)
 add_subdirectory(llvm_ir)
-add_subdirectory(optimizer)
+add_subdirectory(codegen)
 add_subdirectory(parser)
 
 # Executable
 add_executable(TransISA main.cpp)
 
 # Link the libraries
-target_link_libraries(TransISA PRIVATE optimizer_lib ${LLVM_LIBS})
+target_link_libraries(TransISA PRIVATE codegen_lib ${LLVM_LIBS})

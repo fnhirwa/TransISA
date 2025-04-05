@@ -1,15 +1,6 @@
-#include "optimizer/Optimizer.h"
+#include "codegen/Codegen.h"
 
-Optimizer::Optimizer() {
-  // Initialize LLVM targets
-  llvm::InitializeAllTargetInfos();
-  llvm::InitializeAllTargets();
-  llvm::InitializeAllTargetMCs();
-  llvm::InitializeAllAsmParsers();
-  llvm::InitializeAllAsmPrinters();
-}
-
-void Optimizer::optimize(llvm::Module& module) {
+void Codegen::optimize(llvm::Module& module) {
   // Create a pass manager
   llvm::legacy::PassManager passManager;
 
@@ -22,10 +13,19 @@ void Optimizer::optimize(llvm::Module& module) {
   passManager.run(module);
 }
 
-void Optimizer::generateAssembly(
+Codegen::Codegen() {
+  // Initialize all targets, target info, and target MC
+  LLVMInitializeAArch64TargetInfo();
+  LLVMInitializeAArch64Target();
+  LLVMInitializeAArch64TargetMC();
+  LLVMInitializeAArch64AsmParser();
+  LLVMInitializeAArch64AsmPrinter();
+}
+
+void Codegen::generateAssembly(
     llvm::Module& module,
     const std::string& outputFilename) {
-  // Open the output file
+  // Open output file
   std::error_code errorCode;
   llvm::raw_fd_ostream outputStream(
       outputFilename, errorCode, llvm::sys::fs::OF_None);
@@ -35,8 +35,10 @@ void Optimizer::generateAssembly(
     return;
   }
 
-  // Get the target machine (e.g., x86)
+  // Setup target triple
   std::string targetTriple = llvm::sys::getDefaultTargetTriple();
+  module.setTargetTriple(targetTriple);
+
   std::string error;
   const llvm::Target* target =
       llvm::TargetRegistry::lookupTarget(targetTriple, error);
@@ -45,22 +47,22 @@ void Optimizer::generateAssembly(
     return;
   }
 
-  // Configure the target machine
+  // Create target machine
   llvm::TargetOptions targetOptions;
-  llvm::TargetMachine* targetMachine = target->createTargetMachine(
+  auto* targetMachine = target->createTargetMachine(
       targetTriple, "generic", "", targetOptions, llvm::Reloc::Model::PIC_);
+  module.setDataLayout(targetMachine->createDataLayout());
 
-  // Set the module's target triple
-  module.setTargetTriple(targetTriple);
-
-  // Generate assembly code
+  // Emit assembly
   llvm::legacy::PassManager passManager;
-  targetMachine->addPassesToEmitFile(
-      passManager, outputStream, nullptr, llvm::CodeGenFileType::AssemblyFile);
-
-  // Run the passes
+  if (targetMachine->addPassesToEmitFile(
+          passManager,
+          outputStream,
+          nullptr,
+          llvm::CodeGenFileType::AssemblyFile)) {
+    llvm::errs() << "TargetMachine can't emit an assembly file.\n";
+    return;
+  }
   passManager.run(module);
-
-  // Clean up
   outputStream.flush();
 }

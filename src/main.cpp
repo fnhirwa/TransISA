@@ -1,5 +1,6 @@
 #include <iostream>
 #include <vector>
+#include "codegen/Codegen.h"
 #include "lexer/Lexer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm_ir/LLVMIRGenerator.h"
@@ -59,6 +60,12 @@ void testIRGen(std::string_view source) {
   llvm::Module* module = irGen.generateIR(root);
   cout << "Generated LLVM IR:\n";
   module->print(llvm::errs(), nullptr);
+
+  // assembly generation
+  Codegen codegen;
+  std::string outputFilename = "output.s";
+  codegen.generateAssembly(*module, outputFilename);
+  std::cout << "Assembly code generated in " << outputFilename << "\n";
 }
 
 int main(int argc, char* argv[]) {

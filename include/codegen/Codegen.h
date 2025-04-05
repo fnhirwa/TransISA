@@ -1,5 +1,5 @@
-#ifndef OPTIMIZER_H
-#define OPTIMIZER_H
+#ifndef CODEGEN_H
+#define CODEGEN_H
 
 #include <cstddef>
 #include "llvm/IR/LegacyPassManager.h"
@@ -15,14 +15,15 @@
 #include "llvm/Transforms/InstCombine/InstCombine.h"
 #include "llvm/Transforms/Scalar.h"
 #include "llvm/Transforms/Utils.h"
+#include "llvm_ir/LLVMIRGenerator.h"
 
-class Optimizer {
+class Codegen {
  public:
-  Optimizer();
+  Codegen();
   void optimize(llvm::Module& module);
   void generateAssembly(
       llvm::Module& module,
       const std::string& outputFilename);
 };
 
-#endif // OPTIMIZER_H
+#endif // CODEGEN_H
