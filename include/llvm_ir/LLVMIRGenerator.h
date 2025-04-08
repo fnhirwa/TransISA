@@ -151,4 +151,26 @@ class LLVMIRGen {
   llvm::Value* handleSourceMemory(MemoryNode* srcMem);
   llvm::Value* castInputTypes(ASTNode* inputNode, const std::string nodeType);
 };
+
+class SyscallBuilder {
+ public:
+  static void emitSyscall(
+      llvm::IRBuilder<>& builder,
+      llvm::LLVMContext& context,
+      llvm::Module* module,
+      const std::vector<llvm::Value*>& args,
+      uint64_t syscallNumber);
+
+  static void emitExitSyscall(
+      llvm::IRBuilder<>& builder,
+      llvm::LLVMContext& context,
+      llvm::Module* module,
+      llvm::Value* status);
+};
+
+enum SyscallNumbers {
+  SYSCALL_EXIT = 1,
+  SYSCALL_WRITE = 4,
+};
+
 #endif // LLVMIRGENERATOR_H

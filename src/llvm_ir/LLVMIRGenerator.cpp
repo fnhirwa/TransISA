@@ -1,5 +1,46 @@
 #include "llvm_ir/LLVMIRGenerator.h"
 
+// syscall builer class
+void SyscallBuilder::emitSyscall(
+    llvm::IRBuilder<>& builder,
+    llvm::LLVMContext& context,
+    llvm::Module* module,
+    const std::vector<llvm::Value*>& args,
+    uint64_t syscallNumber) {
+  assert(args.size() <= 6 && "Too many syscall arguments");
+
+  llvm::FunctionType* asmFuncType = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(context),
+      std::vector<llvm::Type*>(args.size(), llvm::Type::getInt64Ty(context)),
+      false);
+
+  std::string asmStr;
+  for (size_t i = 0; i < args.size(); ++i) {
+    asmStr += "mov x" + std::to_string(i) + ", $" + std::to_string(i) + "\n";
+  }
+
+  asmStr += "mov x16, #" + std::to_string(syscallNumber & 0xFFFF) + "\n";
+  asmStr += "orr x16, x16, #0x2000000\n";
+  asmStr += "svc #0x80\n";
+
+  std::string constraints(args.size(), 'r');
+  for (size_t i = 1; i < args.size(); ++i)
+    constraints += ",r";
+
+  llvm::InlineAsm* inlineAsm =
+      llvm::InlineAsm::get(asmFuncType, asmStr, constraints, true);
+
+  builder.CreateCall(inlineAsm, args);
+}
+
+void SyscallBuilder::emitExitSyscall(
+    llvm::IRBuilder<>& builder,
+    llvm::LLVMContext& context,
+    llvm::Module* module,
+    llvm::Value* status) {
+  emitSyscall(builder, context, module, {status}, 1); // syscall 1 = exit
+}
+
 // This module object is used to store all the IR generated
 // It is a container for all the IR instructions
 llvm::Module* LLVMIRGen::generateIR(std::unique_ptr<ASTNode>& root) {
@@ -586,65 +627,15 @@ void LLVMIRGen::handleIntInstructionNode(InstructionNode* node) {
     arg6 = r9
     */
 
-    // Create inline assembly for the syscall
-    std::string asmString =
-        "mov x0, $0\n"
-        "mov x1, $1\n"
-        "mov x2, $2\n"
-        "mov x16, #4\n" // Base syscall number for write
-        "orr x16, x16, #0x2000000\n" // OR with macOS prefix
-        "svc #0x80\n"; // Make the syscall
+    // Emit `write` syscall (syscall number 4 on macOS ARM64)
+    std::vector<llvm::Value*> writeArgs = {arg0, arg1, arg2};
+    SyscallBuilder::emitSyscall(
+        builder, context, &module, writeArgs, SYSCALL_WRITE);
 
-    std::string constraints = "r,r,r";
-
-    // Create the inline assembly call
-    llvm::InlineAsm* inlineAsm = llvm::InlineAsm::get(
-        asmFuncType,
-        asmString,
-        constraints,
-        true // hasSideEffects
-    );
-
-    // Make the call
-    std::vector<llvm::Value*> args = {arg0, arg1, arg2};
-    builder.CreateCall(inlineAsm, args);
-
-    // Handle exit syscall (assuming this is for int 0x80 with eax = 1)
-    // In macOS ARM64, the exit syscall number is 1
-
-    // Get the exit status code (usually in ebx)
-    llvm::Value* exitStatus = loadAndConvertToInt64(
-        "ebx", llvm::Type::getInt32Ty(context)); // Exit status code
-
-    // Create function type for exit syscall (only needs one parameter)
-    std::vector<llvm::Type*> exitAsmParamTypes = {
-        llvm::Type::getInt64Ty(context) // exit status
-    };
-    llvm::FunctionType* exitAsmFuncType = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(context), // Return type (void)
-        exitAsmParamTypes,
-        false // isVarArg
-    );
-
-    // Create inline assembly for the exit syscall
-    std::string exitAsmString =
-        "mov x0, $0\n"
-        "mov x16, #1\n" // Base syscall number for exit
-        "orr x16, x16, #0x2000000\n" // OR with macOS prefix
-        "svc #0x80\n"; // Make the syscall
-    std::string exitConstraints = "r";
-
-    // Create the inline assembly call
-    llvm::InlineAsm* exitInlineAsm = llvm::InlineAsm::get(
-        exitAsmFuncType,
-        exitAsmString,
-        exitConstraints,
-        true // hasSideEffects
-    );
-
-    // Make the call
-    std::vector<llvm::Value*> exitArgs = {exitStatus};
-    builder.CreateCall(exitInlineAsm, exitArgs);
+    // Emit `exit` syscall (syscall number 1)
+    llvm::Value* exitStatus =
+        loadAndConvertToInt64("ebx", llvm::Type::getInt32Ty(context));
+    SyscallBuilder::emitExitSyscall(builder, context, &module, exitStatus);
 
 #else
     std::cerr << "Error: Unsupported architecture\n";
