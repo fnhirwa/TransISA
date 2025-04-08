@@ -1,5 +1,84 @@
 #include "llvm_ir/LLVMIRGenerator.h"
 
+std::string generateLinuxARM64InlineAsm(size_t argCount, int syscallNumber) {
+  std::ostringstream asmCode;
+
+  // Move syscall args into x0–x5
+  for (size_t i = 0; i < argCount; ++i) {
+    asmCode << "mov x" << i << ", $" << i << "\n";
+  }
+
+  asmCode << "mov x8, #" << syscallNumber << "\n";
+  asmCode << "svc #0\n";
+  return asmCode.str();
+}
+
+std::string generateMacOSInlineAsm(size_t argCount, int syscallNumber) {
+  std::ostringstream asmCode;
+  for (size_t i = 0; i < argCount; ++i) {
+    asmCode << "mov x" + std::to_string(i) + ", $" + std::to_string(i) + "\n";
+  }
+
+  asmCode << "mov x16, #" + std::to_string(syscallNumber & 0xFFFF) + "\n";
+  asmCode << "orr x16, x16, #0x2000000\n";
+  asmCode << "svc #0x80\n";
+  return asmCode.str();
+}
+
+std::string generateConstraints(size_t argCount) {
+  std::string constraints;
+  for (size_t i = 0; i < argCount; ++i) {
+    constraints += "r";
+    if (i != argCount - 1)
+      constraints += ",";
+  }
+  return constraints;
+}
+
+// syscall builer class
+void SyscallBuilder::emitSyscall(
+    llvm::IRBuilder<>& builder,
+    llvm::LLVMContext& context,
+    llvm::Module* module,
+    const std::vector<llvm::Value*>& args,
+    uint64_t syscallNumber,
+    TargetABI targetABI) {
+  assert(args.size() <= 6 && "Too many syscall arguments");
+
+  llvm::FunctionType* funcType = llvm::FunctionType::get(
+      llvm::Type::getVoidTy(context),
+      std::vector<llvm::Type*>(args.size(), llvm::Type::getInt64Ty(context)),
+      false);
+
+  std::string asmString;
+  std::string constraints;
+
+  if (targetABI == TargetABI::MacOS_ARM64) {
+    asmString = generateMacOSInlineAsm(args.size(), syscallNumber);
+    constraints = generateConstraints(args.size());
+  } else if (targetABI == TargetABI::Linux_ARM64) {
+    asmString = generateLinuxARM64InlineAsm(args.size(), syscallNumber);
+    constraints = generateConstraints(args.size());
+  } else {
+    // Add more ABIs or error
+    return;
+  }
+
+  llvm::InlineAsm* inlineAsm =
+      llvm::InlineAsm::get(funcType, asmString, constraints, true);
+  builder.CreateCall(inlineAsm, args);
+}
+
+void SyscallBuilder::emitExitSyscall(
+    llvm::IRBuilder<>& builder,
+    llvm::LLVMContext& context,
+    llvm::Module* module,
+    llvm::Value* status,
+    TargetABI targetABI) {
+  emitSyscall(
+      builder, context, module, {status}, 1, targetABI); // syscall 1 = exit
+}
+
 // This module object is used to store all the IR generated
 // It is a container for all the IR instructions
 llvm::Module* LLVMIRGen::generateIR(std::unique_ptr<ASTNode>& root) {
@@ -504,147 +583,74 @@ void LLVMIRGen::handleIntInstructionNode(InstructionNode* node) {
     // Store result in EAX (as per x86 convention)
     namedValues["eax"] = result;
 
-#elif defined(__APPLE__) && defined(__aarch64__)
-    // For macOS ARM64, we need to use inline assembly for system calls
-    // Create a function type for our inline assembly
-    std::vector<llvm::Type*> asmParamTypes = {
-        llvm::Type::getInt64Ty(context), // fd
-        llvm::Type::getInt64Ty(context), // buffer
-        llvm::Type::getInt64Ty(context) // length
-    };
-    llvm::FunctionType* asmFuncType = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(context), // Return type (void)
-        asmParamTypes,
-        false // isVarArg
-    );
-
+#elif (defined(__linux__) || defined(__APPLE__)) && defined(__aarch64__)
     // Helper function to load and convert values to i64
     auto loadAndConvertToInt64 = [&](const std::string& regName,
                                      llvm::Type* regType) -> llvm::Value* {
       if (namedValues.count(regName)) {
         llvm::Value* regValue = namedValues[regName];
         if (regValue->getType()->isPointerTy()) {
-          // If the value is a pointer, load it first
-          llvm::Value* loadedValue = builder.CreateLoad(regType, regValue);
+          llvm::Value* loaded = builder.CreateLoad(regType, regValue);
           return builder.CreateZExtOrTrunc(
-              loadedValue, llvm::Type::getInt64Ty(context));
+              loaded, llvm::Type::getInt64Ty(context));
         } else if (regValue->getType()->isIntegerTy()) {
-          // If the value is an integer, zero-extend it to i64
           return builder.CreateZExtOrTrunc(
               regValue, llvm::Type::getInt64Ty(context));
         } else {
-          throw std::runtime_error("Unsupported type for register: " + regName);
+          throw std::runtime_error("Unsupported type for: " + regName);
         }
       } else {
-        // Provide a default value if the register is not found
         return llvm::ConstantInt::get(context, llvm::APInt(64, 0));
       }
     };
-
-    // Get arguments for the syscall
-    llvm::Value* arg0 = loadAndConvertToInt64(
-        "ebx", llvm::Type::getInt32Ty(context)); // File descriptor (stdout)
-
+    // Common syscall args for write(fd, buf, len)
+    llvm::Value* arg0 =
+        loadAndConvertToInt64("ebx", llvm::Type::getInt32Ty(context));
+    llvm::Value* arg2 =
+        loadAndConvertToInt64("edx", llvm::Type::getInt32Ty(context));
     llvm::Value* arg1 = nullptr;
-    if (namedValues.count("ecx")) {
-      // First load the pointer stored in ecx
-      llvm::Value* loadedPtr = builder.CreateLoad(
-          llvm::PointerType::get(context, 0), // Load as pointer type
-          namedValues["ecx"]);
-      // Then convert that pointer to an integer
-      arg1 = builder.CreatePtrToInt(loadedPtr, llvm::Type::getInt64Ty(context));
 
+    if (namedValues.count("ecx")) {
+      llvm::Value* loadedPtr = builder.CreateLoad(
+          llvm::PointerType::get(context, 0), namedValues["ecx"]);
+      arg1 = builder.CreatePtrToInt(loadedPtr, llvm::Type::getInt64Ty(context));
     } else {
       arg1 = llvm::ConstantInt::get(context, llvm::APInt(64, 0));
     }
 
-    llvm::Value* arg2 = loadAndConvertToInt64(
-        "edx", llvm::Type::getInt32Ty(context)); // Length of the message
+    std::vector<llvm::Value*> writeArgs = {arg0, arg1, arg2};
 
-    // arg3 esi
-    // arg4 edi
-    // arg5 ebp
+    llvm::Value* exitStatus =
+        loadAndConvertToInt64("ebx", llvm::Type::getInt32Ty(context));
 
-    /*
-    For MacOS ARM64:arg0
-    x16 = syscall number
-    x0 = arg0
-    x1 = arg1
-    x2 = arg2
-    x3 = arg3
-    ...
+#if defined(__linux__) && defined(__aarch64__)
+    constexpr int SYSCALL_WRITE = 64;
+    constexpr int SYSCALL_EXIT = 93;
 
-    syscall number = 0x2000004 (write)
+    SyscallBuilder::emitSyscall(
+        builder,
+        context,
+        &module,
+        writeArgs,
+        SYSCALL_WRITE,
+        TargetABI::Linux_ARM64);
+    SyscallBuilder::emitExitSyscall(
+        builder, context, &module, exitStatus, TargetABI::Linux_ARM64);
 
-    For x86_6 using syscall function
-    syscall number = rax
-    arg1 = rdi
-    arg2 = rsi
-    arg3 = rdx
-    arg4 = r10
-    arg5 = r8
-    arg6 = r9
-    */
+#elif defined(__APPLE__) && defined(__aarch64__)
+    constexpr int SYSCALL_WRITE = 0x2000004;
+    constexpr int SYSCALL_EXIT = 0x2000001;
 
-    // Create inline assembly for the syscall
-    std::string asmString =
-        "mov x0, $0\n"
-        "mov x1, $1\n"
-        "mov x2, $2\n"
-        "mov x16, #4\n" // Base syscall number for write
-        "orr x16, x16, #0x2000000\n" // OR with macOS prefix
-        "svc #0x80\n"; // Make the syscall
-
-    std::string constraints = "r,r,r";
-
-    // Create the inline assembly call
-    llvm::InlineAsm* inlineAsm = llvm::InlineAsm::get(
-        asmFuncType,
-        asmString,
-        constraints,
-        true // hasSideEffects
-    );
-
-    // Make the call
-    std::vector<llvm::Value*> args = {arg0, arg1, arg2};
-    builder.CreateCall(inlineAsm, args);
-
-    // Handle exit syscall (assuming this is for int 0x80 with eax = 1)
-    // In macOS ARM64, the exit syscall number is 1
-
-    // Get the exit status code (usually in ebx)
-    llvm::Value* exitStatus = loadAndConvertToInt64(
-        "ebx", llvm::Type::getInt32Ty(context)); // Exit status code
-
-    // Create function type for exit syscall (only needs one parameter)
-    std::vector<llvm::Type*> exitAsmParamTypes = {
-        llvm::Type::getInt64Ty(context) // exit status
-    };
-    llvm::FunctionType* exitAsmFuncType = llvm::FunctionType::get(
-        llvm::Type::getVoidTy(context), // Return type (void)
-        exitAsmParamTypes,
-        false // isVarArg
-    );
-
-    // Create inline assembly for the exit syscall
-    std::string exitAsmString =
-        "mov x0, $0\n"
-        "mov x16, #1\n" // Base syscall number for exit
-        "orr x16, x16, #0x2000000\n" // OR with macOS prefix
-        "svc #0x80\n"; // Make the syscall
-    std::string exitConstraints = "r";
-
-    // Create the inline assembly call
-    llvm::InlineAsm* exitInlineAsm = llvm::InlineAsm::get(
-        exitAsmFuncType,
-        exitAsmString,
-        exitConstraints,
-        true // hasSideEffects
-    );
-
-    // Make the call
-    std::vector<llvm::Value*> exitArgs = {exitStatus};
-    builder.CreateCall(exitInlineAsm, exitArgs);
+    SyscallBuilder::emitSyscall(
+        builder,
+        context,
+        &module,
+        writeArgs,
+        SYSCALL_WRITE,
+        TargetABI::MacOS_ARM64);
+    SyscallBuilder::emitExitSyscall(
+        builder, context, &module, exitStatus, TargetABI::MacOS_ARM64);
+#endif
 
 #else
     std::cerr << "Error: Unsupported architecture\n";

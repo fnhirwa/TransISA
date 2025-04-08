@@ -126,6 +126,9 @@ class LLVMIRGen {
  public:
   LLVMIRGen() : module("TransISA", context), builder(context) {}
   llvm::Module* generateIR(std::unique_ptr<ASTNode>& root);
+  llvm::Module* getModule() {
+    return &module;
+  }
   void visitGlobalVariableNode(GlobalVariableNode* node);
   void visitFunctionNode(FunctionNode* node);
   void visitBasicBlockNode(BasicBlockNode* node);
@@ -148,4 +151,33 @@ class LLVMIRGen {
   llvm::Value* handleSourceMemory(MemoryNode* srcMem);
   llvm::Value* castInputTypes(ASTNode* inputNode, const std::string nodeType);
 };
+
+enum class TargetABI {
+  MacOS_ARM64,
+  Linux_ARM64,
+  Linux_X86_64,
+};
+class SyscallBuilder {
+ public:
+  static void emitSyscall(
+      llvm::IRBuilder<>& builder,
+      llvm::LLVMContext& context,
+      llvm::Module* module,
+      const std::vector<llvm::Value*>& args,
+      uint64_t syscallNumber,
+      TargetABI targetABI);
+
+  static void emitExitSyscall(
+      llvm::IRBuilder<>& builder,
+      llvm::LLVMContext& context,
+      llvm::Module* module,
+      llvm::Value* status,
+      TargetABI targetABI);
+};
+
+enum SyscallNumbers {
+  SYSCALL_EXIT = 1,
+  SYSCALL_WRITE = 4,
+};
+
 #endif // LLVMIRGENERATOR_H
