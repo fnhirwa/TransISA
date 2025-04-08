@@ -45,19 +45,29 @@ add_definitions(${LLVM_DEFINITIONS})
 # Map LLVM components to library names
 llvm_map_components_to_libnames(
   LLVM_LIBS
-  core
+  # Core and IR
   support
+  core
   irreader
   mc
-  target
+  scalaropts
+  asmparser
+  asmprinter
+  # aarch64 backend
+  aarch64asmparser
   aarch64codegen
   aarch64desc
-  aarch64asmparser
   aarch64disassembler
   aarch64info
   aarch64utils
-  asmprinter
-  bitwriter)
+  bitwriter
+  # ARM backend ARM ARMCodeGen ARMAsmParser ARMDesc ARMDisassembler ARMInfo
+  # ARMUtils # X86 backend
+  x86asmparser
+  x86codegen
+  x86desc
+  x86disassembler
+  x86info)
 
 # Add test executables
 add_executable(test_lexer test_lexer.cpp)

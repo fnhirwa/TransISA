@@ -13,13 +13,38 @@ void Codegen::optimize(llvm::Module& module) {
   passManager.run(module);
 }
 
-Codegen::Codegen() {
-  // Initialize all targets, target info, and target MC
-  LLVMInitializeAArch64TargetInfo();
-  LLVMInitializeAArch64Target();
-  LLVMInitializeAArch64TargetMC();
-  LLVMInitializeAArch64AsmParser();
-  LLVMInitializeAArch64AsmPrinter();
+std::string detectHostTarget() {
+#if defined(__aarch64__) || defined(_M_ARM64)
+  return "AArch64";
+#elif defined(__x86_64__) || defined(_M_X64)
+  return "X86";
+#else
+  throw std::runtime_error("Unknown or unsupported architecture.");
+#endif
+}
+
+void initializeTarget(const std::string& target) {
+  if (target == "AArch64") {
+    LLVMInitializeAArch64TargetInfo();
+    LLVMInitializeAArch64Target();
+    LLVMInitializeAArch64TargetMC();
+    LLVMInitializeAArch64AsmParser();
+    LLVMInitializeAArch64AsmPrinter();
+  } else if (target == "X86") {
+    LLVMInitializeX86TargetInfo();
+    LLVMInitializeX86Target();
+    LLVMInitializeX86TargetMC();
+    LLVMInitializeX86AsmParser();
+    LLVMInitializeX86AsmPrinter();
+  } else {
+    throw std::runtime_error("Unsupported target: " + target);
+  }
+}
+
+Codegen::Codegen(const std::string& targetOverride) {
+  std::string target =
+      targetOverride.empty() ? detectHostTarget() : targetOverride;
+  initializeTarget(target);
 }
 
 void Codegen::generateAssembly(

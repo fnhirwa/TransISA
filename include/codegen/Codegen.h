@@ -19,7 +19,7 @@
 
 class Codegen {
  public:
-  Codegen();
+  Codegen(const std::string& targetOverride = "");
   void optimize(llvm::Module& module);
   void generateAssembly(
       llvm::Module& module,
