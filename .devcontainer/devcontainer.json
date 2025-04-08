@@ -1,0 +1,18 @@
+{
+    "name": "Assembly + LLVM 19",
+    "build": {
+      "dockerfile": "Dockerfile"
+    },
+    "workspaceFolder": "/workspaces/${localWorkspaceFolderBasename}",
+    "runArgs": ["--privileged"],
+    "extensions": [
+      "ms-vscode.cpptools",
+      "ms-vscode.makefile-tools",
+      "llvm-vs-code-extensions.vscode-llvm",
+      "ms-vscode.cpptools-extension-pack"
+    ],
+    "settings": {
+      "terminal.integrated.defaultProfile.linux": "bash"
+    }
+  }
+  
