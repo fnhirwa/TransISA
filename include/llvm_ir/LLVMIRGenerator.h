@@ -152,6 +152,11 @@ class LLVMIRGen {
   llvm::Value* castInputTypes(ASTNode* inputNode, const std::string nodeType);
 };
 
+enum class TargetABI {
+  MacOS_ARM64,
+  Linux_ARM64,
+  Linux_X86_64,
+};
 class SyscallBuilder {
  public:
   static void emitSyscall(
@@ -159,13 +164,15 @@ class SyscallBuilder {
       llvm::LLVMContext& context,
       llvm::Module* module,
       const std::vector<llvm::Value*>& args,
-      uint64_t syscallNumber);
+      uint64_t syscallNumber,
+      TargetABI targetABI);
 
   static void emitExitSyscall(
       llvm::IRBuilder<>& builder,
       llvm::LLVMContext& context,
       llvm::Module* module,
-      llvm::Value* status);
+      llvm::Value* status,
+      TargetABI targetABI);
 };
 
 enum SyscallNumbers {
