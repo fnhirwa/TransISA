@@ -52,10 +52,6 @@ class LLVMIRGen {
            [](llvm::IRBuilder<>& builder, llvm::Value* lhs, llvm::Value* rhs) {
              return builder.CreateMul(lhs, rhs, "multmp");
            }},
-          {"div",
-           [](llvm::IRBuilder<>& builder, llvm::Value* lhs, llvm::Value* rhs) {
-             return builder.CreateSDiv(lhs, rhs, "divtmp"); // Signed division
-           }},
           {"and",
            [](llvm::IRBuilder<>& builder, llvm::Value* lhs, llvm::Value* rhs) {
              return builder.CreateAnd(lhs, rhs, "andtmp");
@@ -145,11 +141,15 @@ class LLVMIRGen {
   void handleBranchingInstructions(InstructionNode* node);
   void handleLoopInstructionNode(InstructionNode* node);
   void handleCallInstructionNode(InstructionNode* node);
+  void handleDivInstructionNode(InstructionNode* node);
 
   // some memory related functions
   llvm::Value* handleDestinationMemory(MemoryNode* destMem);
   llvm::Value* handleSourceMemory(MemoryNode* srcMem);
   llvm::Value* castInputTypes(ASTNode* inputNode, const std::string nodeType);
+
+  // Error logging functions
+  llvm::FunctionCallee getPrintFunction();
 };
 
 enum class TargetABI {

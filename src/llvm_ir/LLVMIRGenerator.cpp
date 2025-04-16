@@ -251,6 +251,12 @@ void LLVMIRGen::visitInstructionNode(InstructionNode* node) {
   } else if (node->opcode == "call") {
     handleCallInstructionNode(node);
     return;
+  } else if (node->opcode == "div") {
+    handleDivInstructionNode(node);
+    return;
+  } else if (node->opcode == "ret") {
+    handleRetInstructionNode(node);
+    return;
   } else if (binOpTable.find(node->opcode) != binOpTable.end()) {
     handleBinaryOpNode(node);
     return;
@@ -267,14 +273,26 @@ void LLVMIRGen::visitInstructionNode(InstructionNode* node) {
 }
 
 void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
-  if (node->operands.size() != 2) {
-    std::cerr << "Error: Binary operation requires exactly two operands.\n";
+  ASTNode* lhsNode = nullptr;
+  ASTNode* rhsNode = nullptr;
+  if (node->operands.size() == 2) {
+    lhsNode = node->operands[0].get();
+    rhsNode = node->operands[1].get();
+  } else if (node->operands.size() == 3) {
+    lhsNode = node->operands[1].get();
+    rhsNode = node->operands[2].get();
+  } else if (node->operands.size() == 4) {
+    lhsNode = node->operands[0].get();
+    rhsNode = node->operands[1].get();
+  } else {
+    std::cerr << "Error: Binary operation: " << node->opcode
+              << " requires two operands.\n";
     return;
   }
-
-  ASTNode* lhsNode = node->operands[0].get();
-  ASTNode* rhsNode = node->operands[1].get();
-
+  if (!lhsNode || !rhsNode) {
+    std::cerr << "Error: Binary operation requires two operands.\n";
+    return;
+  }
   // Get the destination register
   auto* lhsReg = dynamic_cast<RegisterNode*>(lhsNode);
   if (!lhsReg) {
@@ -352,13 +370,26 @@ void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
 }
 
 void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
-  if (node->operands.size() != 2) {
+  ASTNode* destNode = nullptr;
+  ASTNode* srcNode = nullptr;
+  if (node->operands.size() == 2) {
+    destNode = node->operands[0].get();
+    srcNode = node->operands[1].get();
+  } else if (node->operands.size() == 3) {
+    destNode = node->operands[1].get();
+    srcNode = node->operands[2].get();
+  } else if (node->operands.size() == 4) {
+    destNode = node->operands[0].get();
+    srcNode = node->operands[1].get();
+  } else {
     std::cerr << "Invalid 'mov' operands: " << node->operands.size() << "\n";
     return;
   }
 
-  ASTNode* destNode = node->operands[0].get();
-  ASTNode* srcNode = node->operands[1].get();
+  if (!destNode || !srcNode) {
+    std::cerr << "Error: 'mov' instruction requires two operands\n";
+    return;
+  }
 
   llvm::Function* function = builder.GetInsertBlock()->getParent();
   if (!function) {
@@ -717,7 +748,19 @@ llvm::Value* LLVMIRGen::handleDestinationMemory(MemoryNode* destMem) {
 
 void LLVMIRGen::handleSyscallInstructionNode(InstructionNode* node) {}
 
-void LLVMIRGen::handleRetInstructionNode(InstructionNode* node) {}
+void LLVMIRGen::handleRetInstructionNode(InstructionNode* node) {
+  // Assume we're using EAX as return value if set
+  llvm::Value* retVal = nullptr;
+
+  auto it = namedValues.find("eax"); // EAX often holds return values in x86
+  if (it != namedValues.end()) {
+    retVal = builder.CreateLoad(
+        llvm::Type::getInt32Ty(context), it->second, "ret_val");
+    builder.CreateRet(retVal);
+  } else {
+    builder.CreateRetVoid();
+  }
+}
 
 llvm::Value* LLVMIRGen::castInputTypes(
     ASTNode* inputNode,
@@ -1043,6 +1086,88 @@ void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {
     llvm::Value* result = call;
     // Store result to stack or variable table
   }
+}
+
+void LLVMIRGen::handleDivInstructionNode(InstructionNode* node) {
+  if (node->operands.size() != 1) {
+    std::cerr << "Error: div expects a single operand (the divisor).\n";
+    return;
+  }
+
+  ASTNode* divisorNode = node->operands[0].get();
+  std::string divisorType = check_operandType(divisorNode);
+  llvm::Value* divisor = castInputTypes(divisorNode, divisorType);
+
+  if (divisor->getType()->isPointerTy()) {
+    divisor = builder.CreatePtrToInt(
+        divisor, llvm::Type::getInt32Ty(context), "divisor_int");
+  }
+
+  // Load EAX and EDX (assumed initialized earlier)
+  llvm::Value* eaxVal = namedValues["eax"];
+  llvm::Value* edxVal = namedValues["edx"];
+  if (!eaxVal || !edxVal) {
+    std::cerr << "Error: EAX and/or EDX not initialized before division.\n";
+    return;
+  }
+
+  eaxVal =
+      builder.CreateLoad(llvm::Type::getInt32Ty(context), eaxVal, "load_eax");
+  edxVal =
+      builder.CreateLoad(llvm::Type::getInt32Ty(context), edxVal, "load_edx");
+
+  // Combine EDX:EAX into a 64-bit dividend
+  llvm::Value* edxExt =
+      builder.CreateZExt(edxVal, llvm::Type::getInt64Ty(context), "zext_edx");
+  llvm::Value* eaxExt =
+      builder.CreateZExt(eaxVal, llvm::Type::getInt64Ty(context), "zext_eax");
+
+  llvm::Value* dividend = builder.CreateShl(
+      edxExt, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 32));
+  dividend = builder.CreateOr(dividend, eaxExt, "dividend");
+
+  // Zero-check
+  llvm::Value* isZero = builder.CreateICmpEQ(
+      divisor, llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0));
+  llvm::Function* parentFunc = builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock* divOkBB =
+      llvm::BasicBlock::Create(context, "div.ok", parentFunc);
+  llvm::BasicBlock* divErrBB =
+      llvm::BasicBlock::Create(context, "div.err", parentFunc);
+
+  builder.CreateCondBr(isZero, divErrBB, divOkBB);
+
+  builder.SetInsertPoint(divErrBB);
+  builder.CreateCall(
+      getPrintFunction(),
+      {builder.CreateGlobalStringPtr("Divide by zero error\n")});
+  builder.CreateUnreachable();
+
+  builder.SetInsertPoint(divOkBB);
+
+  llvm::Value* divisor64 = builder.CreateZExt(
+      divisor, llvm::Type::getInt64Ty(context), "zext_divisor");
+
+  llvm::Value* quotient = builder.CreateUDiv(dividend, divisor64, "quotient");
+  llvm::Value* remainder = builder.CreateURem(dividend, divisor64, "remainder");
+
+  // Truncate results back to 32-bit and store in EAX and EDX
+  llvm::Value* q32 =
+      builder.CreateTrunc(quotient, llvm::Type::getInt32Ty(context), "quot32");
+  llvm::Value* r32 =
+      builder.CreateTrunc(remainder, llvm::Type::getInt32Ty(context), "rem32");
+
+  builder.CreateStore(q32, namedValues["eax"]);
+  builder.CreateStore(r32, namedValues["edx"]);
+}
+
+llvm::FunctionCallee LLVMIRGen::getPrintFunction() {
+  llvm::FunctionType* ft = llvm::FunctionType::get(
+      llvm::Type::getInt32Ty(context),
+      llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context)),
+      false);
+
+  return module.getOrInsertFunction("puts", ft);
 }
 
 void LLVMIRGen::handleLoopInstructionNode(InstructionNode* node) {}
