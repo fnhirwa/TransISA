@@ -237,10 +237,14 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
         } else if (
             operandToken.value == "byte" || operandToken.value == "word" ||
             operandToken.value == "dword" || operandToken.value == "qword") {
-          continue;
+          operands.push_back(
+              std::make_unique<OperandSizeNode>(operandToken.value));
         } else if (operandToken.type == TokenType::IDENTIFIER) {
           operands.push_back(
               std::make_unique<MemoryNode>(operandToken.value, "", false));
+        } else if (operandToken.type == TokenType::PUNCTUATION) {
+          operands.push_back(
+              std::make_unique<PunctuationNode>(operandToken.value));
         }
       }
 

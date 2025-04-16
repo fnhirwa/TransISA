@@ -24,6 +24,7 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert("syscall", TokenType::INSTRUCTION);
   keywordTrie->insert("int", TokenType::INSTRUCTION);
   keywordTrie->insert("cmp", TokenType::INSTRUCTION);
+  keywordTrie->insert("test", TokenType::INSTRUCTION);
   // FPU
   keywordTrie->insert("fadd", TokenType::INSTRUCTION); // Floating add
   keywordTrie->insert("fsub", TokenType::INSTRUCTION); // Floating subtract

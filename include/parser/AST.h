@@ -231,4 +231,27 @@ class BssNode : public ASTNode {
   }
 };
 
+// Punctuation Node
+class PunctuationNode : public ASTNode {
+ public:
+  std::string punctuation;
+  explicit PunctuationNode(const std::string& punctuation)
+      : punctuation(punctuation) {}
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "Punctuation: " << punctuation << "\n";
+  }
+};
+
+// Operand Size Node
+class OperandSizeNode : public ASTNode {
+ public:
+  std::string size;
+  explicit OperandSizeNode(const std::string& size) : size(size) {}
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "Operand Size: " << size << "\n";
+  }
+};
+
 #endif // AST_H

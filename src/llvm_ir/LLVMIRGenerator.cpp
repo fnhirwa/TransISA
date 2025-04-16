@@ -242,25 +242,26 @@ void LLVMIRGen::visitInstructionNode(InstructionNode* node) {
   if (node->opcode == "mov") {
     handleMovInstructionNode(node);
     return;
-  }
-  if (node->opcode == "lea") {
+  } else if (node->opcode == "lea") {
     handleLeaInstructionNode(node);
     return;
-  }
-  if (node->opcode == "int") {
+  } else if (node->opcode == "int") {
     handleIntInstructionNode(node);
     return;
-  }
-  if (binOpTable.find(node->opcode) != binOpTable.end()) {
+  } else if (node->opcode == "call") {
+    handleCallInstructionNode(node);
+    return;
+  } else if (binOpTable.find(node->opcode) != binOpTable.end()) {
     handleBinaryOpNode(node);
     return;
-  }
-  if (cmpOpTable.find(node->opcode) != cmpOpTable.end()) {
+  } else if (cmpOpTable.find(node->opcode) != cmpOpTable.end()) {
     handlCompareInstructionNode(node);
     return;
-  }
-  if (jumpOpTable.find(node->opcode) != jumpOpTable.end()) {
+  } else if (jumpOpTable.find(node->opcode) != jumpOpTable.end()) {
     handleBranchingInstructions(node);
+    return;
+  } else {
+    std::cerr << "Unsuppoerted operand type: " << node->opcode << "\n";
     return;
   }
 }
@@ -380,8 +381,10 @@ void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
 
     if (!srcValue) {
       std::cerr << "Error: Source register " << srcReg->registerName
-                << " not found\n";
-      return;
+                << " not found " << "Allocating it.\n";
+      llvm::Value* allocaInst = builder.CreateAlloca(
+          llvm::Type::getInt32Ty(context), nullptr, srcReg->registerName);
+      namedValues[srcReg->registerName] = allocaInst;
     }
   } else if (srcType == "mem") {
     auto* memNode = dynamic_cast<MemoryNode*>(srcNode);
@@ -396,8 +399,15 @@ void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
     if (!memNode->base.empty()) {
       if (namedValues.find(memNode->base) == namedValues.end()) {
         std::cerr << "Error: Base register " << memNode->base
-                  << " not allocated\n";
-        return;
+                  << " not allocated yet. Allocating it.\n";
+        llvm::GlobalVariable* globalVar = new llvm::GlobalVariable(
+            module,
+            llvm::Type::getInt32Ty(context),
+            false,
+            llvm::GlobalValue::ExternalLinkage,
+            llvm::ConstantInt::get(context, llvm::APInt(32, 0)),
+            memNode->base);
+        namedValues[memNode->base] = globalVar; // registered globally
       }
       baseAddr = namedValues[memNode->base];
       baseAddr = builder.CreateLoad(
@@ -979,41 +989,60 @@ void LLVMIRGen::handleBranchingInstructions(InstructionNode* node) {
 
 // when we have a function call
 void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {
-  llvm::Function* currentFunction = builder.GetInsertBlock()->getParent();
-  ASTNode* callee = node->operands[0].get();
-  if (!callee) {
-    std::cerr << "Error: No Function provided for call Instruction\n";
+  if (node->operands.size() < 1) {
+    std::cerr << "Error: Call instruction missing callee operand\n";
     return;
   }
 
-  auto* calleeNode = dynamic_cast<MemoryNode*>(callee);
+  auto* calleeNode = dynamic_cast<MemoryNode*>(node->operands[0].get());
   if (!calleeNode) {
-    std::cerr << "Error: Invalid function type for: " << node->opcode
-              << " instruction\n";
+    std::cerr << "Error: Invalid callee for call instruction\n";
     return;
   }
 
-  std::string targetFunctionName = calleeNode->base;
-  if (targetFunctionName.empty()) {
-    std::cerr << "Error: No function specified for: " << node->opcode
-              << " instruction\n";
-    return;
+  std::string functionName = calleeNode->base;
+  std::vector<llvm::Value*> args;
+
+  // Evaluate argument expressions
+  for (size_t i = 1; i < node->operands.size(); ++i) {
+    llvm::Value* arg = castInputTypes(
+        node->operands[i].get(), check_operandType(node->operands[i].get()));
+    if (!arg) {
+      std::cerr << "Error: Failed to evaluate operand " << i << "\n";
+      return;
+    }
+    if (!arg) {
+      std::cerr << "Error: Failed to evaluate argument " << i << "\n";
+      return;
+    }
+    args.push_back(arg);
   }
+
   llvm::Function* calleeFunction = nullptr;
-  // check if the function is predefined in
-  if (definedFunctionsMap.find(targetFunctionName) !=
-      definedFunctionsMap.end()) {
-    calleeFunction = definedFunctionsMap[targetFunctionName];
+
+  if (definedFunctionsMap.count(functionName)) {
+    calleeFunction = definedFunctionsMap[functionName];
   } else {
-    llvm::FunctionType* funcType =
-        llvm::FunctionType::get(llvm::Type::getVoidTy(context), false);
+    std::vector<llvm::Type*> argTypes;
+    for (auto* arg : args) {
+      argTypes.push_back(arg->getType());
+    }
+    llvm::FunctionType* funcType = llvm::FunctionType::get(
+        llvm::Type::getVoidTy(context), argTypes, false);
+
     calleeFunction = llvm::Function::Create(
-        funcType, llvm::Function::ExternalLinkage, targetFunctionName, module);
-    definedFunctionsMap[targetFunctionName] = calleeFunction;
+        funcType, llvm::Function::ExternalLinkage, functionName, module);
+    definedFunctionsMap[functionName] = calleeFunction;
   }
 
-  llvm::CallInst* callInst = builder.CreateCall(calleeFunction);
-  callInst->setTailCall(false);
+  llvm::CallInst* call = builder.CreateCall(calleeFunction, args);
+  call->setTailCall(false);
+
+  // Optional: use the result if not void
+  if (!calleeFunction->getReturnType()->isVoidTy()) {
+    llvm::Value* result = call;
+    // Store result to stack or variable table
+  }
 }
 
 void LLVMIRGen::handleLoopInstructionNode(InstructionNode* node) {}
