@@ -175,8 +175,13 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
   if (labelMap.find("entry") != labelMap.end()) {
     entryBB = labelMap["entry"];
     builder.SetInsertPoint(entryBB);
+    // initialize function stack
+    if (!rspPerFunction.count(function)) {
+      initializeFunctionStack(function);
+    }
   }
-  // Visit each block and generate the IR
+
+  std::vector<llvm::BasicBlock*> orderedBlocks;
   for (const auto& block : node->basicBlocks) {
     if (block) {
       auto* basicBlockNode = dynamic_cast<BasicBlockNode*>(block.get());
@@ -184,12 +189,24 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
 
       if (labelMap.find(basicBlockName) != labelMap.end()) {
         llvm::BasicBlock* bb = labelMap[basicBlockName];
-        builder.SetInsertPoint(bb);
-        visitBasicBlockNode(basicBlockNode);
-      } else {
-        std::cerr << "Error: Block '" << basicBlockNode->label
-                  << "' not found in labelMap.\n";
+        orderedBlocks.push_back(bb); // Maintain correct order
       }
+    }
+  }
+
+  // Visit each block and generate the IR
+  for (size_t i = 0; i < node->basicBlocks.size(); ++i) {
+    auto* block = node->basicBlocks[i].get();
+    auto* basicBlockNode = dynamic_cast<BasicBlockNode*>(block);
+    std::string basicBlockName = entryBlockNames[basicBlockNode->label];
+
+    if (labelMap.find(basicBlockName) != labelMap.end()) {
+      llvm::BasicBlock* bb = labelMap[basicBlockName];
+      builder.SetInsertPoint(bb);
+      visitBasicBlockNode(basicBlockNode, orderedBlocks);
+    } else {
+      std::cerr << "Error: Block '" << basicBlockNode->label
+                << "' not found in labelMap.\n";
     }
   }
 
@@ -199,7 +216,20 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
   }
 }
 
-void LLVMIRGen::visitBasicBlockNode(BasicBlockNode* node) {
+llvm::BasicBlock* inferNextBlock(
+    llvm::BasicBlock* current,
+    const std::vector<llvm::BasicBlock*>& blocks) {
+  for (size_t i = 0; i < blocks.size() - 1; ++i) {
+    if (blocks[i] == current) {
+      return blocks[i + 1]; // Return next block in sequence
+    }
+  }
+  return nullptr; // No next block found (end of function)
+}
+
+void LLVMIRGen::visitBasicBlockNode(
+    BasicBlockNode* node,
+    const std::vector<llvm::BasicBlock*>& orderedBlocks) {
   llvm::Function* function = builder.GetInsertBlock()->getParent();
   if (!function) {
     std::cerr << "Error: No parent function for the basic block\n";
@@ -221,6 +251,13 @@ void LLVMIRGen::visitBasicBlockNode(BasicBlockNode* node) {
   // Generate IR for instructions in this block
   for (const auto& instr : node->instructions) {
     visitInstructionNode(dynamic_cast<InstructionNode*>(instr.get()));
+  }
+  if (!bb->getTerminator()) {
+    if (auto next = inferNextBlock(bb, orderedBlocks)) {
+      builder.CreateBr(next);
+    } else {
+      builder.CreateRetVoid(); // Final block
+    }
   }
 }
 
@@ -257,11 +294,14 @@ void LLVMIRGen::visitInstructionNode(InstructionNode* node) {
   } else if (node->opcode == "ret") {
     handleRetInstructionNode(node);
     return;
+  } else if (node->opcode == "push" || node->opcode == "pop") {
+    handleStackOperationInstructionNode(node);
+    return;
   } else if (binOpTable.find(node->opcode) != binOpTable.end()) {
     handleBinaryOpNode(node);
     return;
   } else if (cmpOpTable.find(node->opcode) != cmpOpTable.end()) {
-    handlCompareInstructionNode(node);
+    handleCompareInstructionNode(node);
     return;
   } else if (jumpOpTable.find(node->opcode) != jumpOpTable.end()) {
     handleBranchingInstructions(node);
@@ -749,16 +789,43 @@ llvm::Value* LLVMIRGen::handleDestinationMemory(MemoryNode* destMem) {
 void LLVMIRGen::handleSyscallInstructionNode(InstructionNode* node) {}
 
 void LLVMIRGen::handleRetInstructionNode(InstructionNode* node) {
-  // Assume we're using EAX as return value if set
-  llvm::Value* retVal = nullptr;
-
-  auto it = namedValues.find("eax"); // EAX often holds return values in x86
-  if (it != namedValues.end()) {
-    retVal = builder.CreateLoad(
-        llvm::Type::getInt32Ty(context), it->second, "ret_val");
-    builder.CreateRet(retVal);
-  } else {
+  if (node->operands.empty()) {
     builder.CreateRetVoid();
+  } else {
+    if (node->operands.size() != 1) {
+      std::cerr << "Error: 'ret' instruction requires exactly one operand\n";
+      return;
+    }
+    auto* returnTarget = dynamic_cast<MemoryNode*>(node->operands[0].get());
+    if (!returnTarget) {
+      std::cerr << "Error: Invalid return type for 'ret' instruction\n";
+      return;
+    }
+    llvm::Value* retVal = nullptr;
+    if (returnTarget->base == "eax") {
+      retVal = namedValues["eax"];
+    } else if (returnTarget->base == "rax") {
+      retVal = namedValues["rax"];
+    } else {
+      std::cerr << "Error: Unsupported return target: " << returnTarget->base
+                << "\n";
+      return;
+    }
+    if (!retVal) {
+      std::cerr << "Error: Return value not found\n";
+      return;
+    }
+    // Create a return instruction
+    llvm::Function* function = builder.GetInsertBlock()->getParent();
+    if (!function) {
+      std::cerr << "Error: No parent function for 'ret' instruction\n";
+      return;
+    }
+    llvm::BasicBlock* exitBlock =
+        llvm::BasicBlock::Create(context, "exit", function);
+    builder.CreateBr(exitBlock);
+    builder.SetInsertPoint(exitBlock);
+    builder.CreateRet(retVal);
   }
 }
 
@@ -845,7 +912,7 @@ llvm::Value* LLVMIRGen::castInputTypes(
   return nodeValue;
 }
 
-void LLVMIRGen::handlCompareInstructionNode(InstructionNode* node) {
+void LLVMIRGen::handleCompareInstructionNode(InstructionNode* node) {
   if (node->operands.size() != 2) {
     std::cerr
         << "Error: The Compare Instruction requires exactly two operands.\n";
@@ -971,6 +1038,11 @@ void LLVMIRGen::handleBranchingInstructions(InstructionNode* node) {
         ContextCPUState.zeroFlag,
         llvm::ConstantInt::getTrue(context),
         "cmp_ne");
+  } else if (opcode == "jnz") {
+    condition = builder.CreateICmpNE(
+        ContextCPUState.zeroFlag,
+        llvm::ConstantInt::getFalse(context),
+        "cmp_nz");
   } else if (opcode == "jg") {
     condition = builder.CreateAnd(
         builder.CreateICmpEQ(
@@ -1171,3 +1243,100 @@ llvm::FunctionCallee LLVMIRGen::getPrintFunction() {
 }
 
 void LLVMIRGen::handleLoopInstructionNode(InstructionNode* node) {}
+
+void LLVMIRGen::initializeFunctionStack(llvm::Function* func) {
+  if (rspPerFunction.count(func))
+    return;
+  llvm::IRBuilder<> tmpBuilder(
+      &func->getEntryBlock(), func->getEntryBlock().begin());
+  auto* stackArrayType =
+      llvm::ArrayType::get(llvm::Type::getInt32Ty(context), 1024);
+  auto* stackMem = tmpBuilder.CreateAlloca(stackArrayType, nullptr, "stackmem");
+  auto* rsp =
+      tmpBuilder.CreateAlloca(llvm::Type::getInt32Ty(context), nullptr, "rsp");
+
+  tmpBuilder.CreateStore(
+      llvm::ConstantInt::get(context, llvm::APInt(32, 1024)), rsp);
+  stackMemPerFunction[func] = stackMem;
+  rspPerFunction[func] = rsp;
+}
+
+void LLVMIRGen::handleStackOperationInstructionNode(InstructionNode* node) {
+  llvm::Function* currentFunc = builder.GetInsertBlock()->getParent();
+  llvm::AllocaInst* rsp = rspPerFunction[currentFunc];
+  llvm::AllocaInst* stackMem = stackMemPerFunction[currentFunc];
+  llvm::Type* int32Ty = llvm::Type::getInt32Ty(context);
+
+  if (!rsp) {
+    std::cerr << "[Error] rsp is nullptr for function: "
+              << currentFunc->getName().str() << "\n";
+    return;
+  }
+  if (!stackMem) {
+    std::cerr << "[Error] stackMem is nullptr for function: "
+              << currentFunc->getName().str() << "\n";
+    return;
+  }
+
+  if (node->opcode == "push") {
+    if (node->operands.empty()) {
+      std::cerr << "Error: No operand found for 'push'\n";
+      return;
+    }
+
+    auto* pushReg = dynamic_cast<RegisterNode*>(node->operands[0].get());
+    if (!pushReg) {
+      std::cerr << "Error: Invalid register type for 'push'\n";
+      return;
+    }
+
+    llvm::Value* valueToPush = castInputTypes(
+        node->operands[0].get(), check_operandType(node->operands[0].get()));
+    if (!valueToPush) {
+      std::cerr << "Error: Failed to generate operand for 'push'\n";
+      return;
+    }
+
+    llvm::Value* idx = builder.CreateLoad(int32Ty, rsp, "load_rsp");
+
+    llvm::Value* gep = builder.CreateInBoundsGEP(
+        stackMem->getAllocatedType(),
+        stackMem,
+        {llvm::ConstantInt::get(int32Ty, 0), idx},
+        "stack_idx");
+
+    builder.CreateStore(valueToPush, gep);
+
+    llvm::Value* newRsp =
+        builder.CreateAdd(idx, llvm::ConstantInt::get(int32Ty, 1), "inc_rsp");
+    builder.CreateStore(newRsp, rsp);
+
+  } else if (node->opcode == "pop") {
+    if (node->operands.empty()) {
+      std::cerr << "Error: No operand found for 'pop'\n";
+      return;
+    }
+
+    auto* popReg = dynamic_cast<RegisterNode*>(node->operands[0].get());
+    if (!popReg) {
+      std::cerr << "Error: Invalid register type for 'pop'\n";
+      return;
+    }
+
+    llvm::Value* idx = builder.CreateLoad(int32Ty, rsp, "load_rsp");
+
+    llvm::Value* newRsp =
+        builder.CreateSub(idx, llvm::ConstantInt::get(int32Ty, 1), "dec_rsp");
+    builder.CreateStore(newRsp, rsp);
+
+    llvm::Value* gep = builder.CreateInBoundsGEP(
+        stackMem->getAllocatedType(),
+        stackMem,
+        {llvm::ConstantInt::get(int32Ty, 0), newRsp},
+        "stack_idx");
+
+    llvm::Value* popVal = builder.CreateLoad(int32Ty, gep, "pop_val");
+
+    namedValues[popReg->registerName] = popVal;
+  }
+}

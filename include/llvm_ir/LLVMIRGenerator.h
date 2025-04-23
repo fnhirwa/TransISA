@@ -32,7 +32,12 @@ class LLVMIRGen {
   llvm::IRBuilder<> builder;
   std::unordered_map<std::string, llvm::Value*> namedValues;
   std::unordered_map<std::string, llvm::BasicBlock*> labelMap;
-  // predefined functions for lookup
+
+  // stack memory tracking
+  std::unordered_map<llvm::Function*, llvm::AllocaInst*> stackMemPerFunction;
+  std::unordered_map<llvm::Function*, llvm::AllocaInst*> rspPerFunction;
+  // std::unordered_map<llvm::Function*, std::vector<llvm::Value*>>
+  // virtualStackPerFunction; predefined functions for lookup
   std::unordered_map<std::string, llvm::Function*> definedFunctionsMap;
   std::unordered_map<std::string, std::string> entryBlockNames;
   std::unordered_map<
@@ -127,7 +132,9 @@ class LLVMIRGen {
   }
   void visitGlobalVariableNode(GlobalVariableNode* node);
   void visitFunctionNode(FunctionNode* node);
-  void visitBasicBlockNode(BasicBlockNode* node);
+  void visitBasicBlockNode(
+      BasicBlockNode* node,
+      const std::vector<llvm::BasicBlock*>& orderedBlocks);
   void visitInstructionNode(InstructionNode* node);
 
   // different instruction set
@@ -137,11 +144,13 @@ class LLVMIRGen {
   void handleSyscallInstructionNode(InstructionNode* node);
   void handleIntInstructionNode(InstructionNode* node);
   void handleRetInstructionNode(InstructionNode* node);
-  void handlCompareInstructionNode(InstructionNode* node);
+  void handleCompareInstructionNode(InstructionNode* node);
   void handleBranchingInstructions(InstructionNode* node);
   void handleLoopInstructionNode(InstructionNode* node);
   void handleCallInstructionNode(InstructionNode* node);
   void handleDivInstructionNode(InstructionNode* node);
+  void handleStackOperationInstructionNode(InstructionNode* node);
+  void initializeFunctionStack(llvm::Function* function);
 
   // some memory related functions
   llvm::Value* handleDestinationMemory(MemoryNode* destMem);
