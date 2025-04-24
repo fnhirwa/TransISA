@@ -30,12 +30,18 @@ class LLVMIRGen {
   llvm::LLVMContext context;
   llvm::Module module;
   llvm::IRBuilder<> builder;
+  // tracking named values
+  // for example, eax, ebx, ecx, edx for the context of the current function
+  // and the current basic block
   std::unordered_map<std::string, llvm::Value*> namedValues;
   std::unordered_map<std::string, llvm::BasicBlock*> labelMap;
+  std::unordered_map<std::string, llvm::Value*> globalNamedValues;
 
   // stack memory tracking
-  std::unordered_map<llvm::Function*, llvm::AllocaInst*> stackMemPerFunction;
-  std::unordered_map<llvm::Function*, llvm::AllocaInst*> rspPerFunction;
+  std::unordered_map<llvm::Function*, llvm::AllocaInst*> stackMemPtrPerFunction;
+  std::unordered_map<llvm::Function*, llvm::AllocaInst*> rspIntPerFunction;
+  std::unordered_map<llvm::Function*, llvm::AllocaInst*> stackMemIntPerFunction;
+  std::unordered_map<llvm::Function*, llvm::AllocaInst*> rspPtrPerFunction;
   // std::unordered_map<llvm::Function*, std::vector<llvm::Value*>>
   // virtualStackPerFunction; predefined functions for lookup
   std::unordered_map<std::string, llvm::Function*> definedFunctionsMap;
@@ -159,6 +165,21 @@ class LLVMIRGen {
 
   // Error logging functions
   llvm::FunctionCallee getPrintFunction();
+  // namedVariables
+  // getting the named variables
+  llvm::Value* getNamedValue(const std::string& name) {
+    if (namedValues.count(name))
+      return namedValues[name];
+    if (globalNamedValues.count(name))
+      return globalNamedValues[name];
+    return nullptr; // Error
+  }
+  llvm::Type* getLLVMTypeForRegister(const std::string& regName) {
+    auto it = namedValues.find(regName);
+    if (it != namedValues.end())
+      return it->second->getType();
+    return llvm::Type::getInt32Ty(context); // default fallback
+  }
 };
 
 enum class TargetABI {
