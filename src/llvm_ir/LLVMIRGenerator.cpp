@@ -85,11 +85,42 @@ llvm::Module* LLVMIRGen::generateIR(std::unique_ptr<ASTNode>& root) {
   for (const auto& child : root->children) {
     if (auto* var = dynamic_cast<GlobalVariableNode*>(child.get())) {
       visitGlobalVariableNode(var);
+    } else if (auto* bss = dynamic_cast<BssNode*>(child.get())) {
+      visitBssNode(bss);
     } else if (auto* func = dynamic_cast<FunctionNode*>(child.get())) {
       visitFunctionNode(func);
     }
   }
   return &module;
+}
+
+void LLVMIRGen::visitBssNode(BssNode* node) {
+  llvm::Type* i8Type = llvm::Type::getInt8Ty(context);
+  llvm::ArrayType* arrayType = nullptr;
+  if (node->directiveName == "resb") {
+    arrayType = llvm::ArrayType::get(i8Type, stoi(node->size));
+  } else if (node->directiveName == "resw") {
+    arrayType =
+        llvm::ArrayType::get(llvm::Type::getInt16Ty(context), stoi(node->size));
+  } else if (node->directiveName == "resd") {
+    arrayType =
+        llvm::ArrayType::get(llvm::Type::getInt32Ty(context), stoi(node->size));
+  } else {
+    throw std::runtime_error("Unsupported directive: " + node->directiveName);
+  }
+  // Create a global variable for the BSS section
+  llvm::GlobalVariable* globalVar = new llvm::GlobalVariable(
+      module,
+      arrayType,
+      false, // isConstant
+      llvm::GlobalValue::ExternalLinkage,
+      llvm::ConstantAggregateZero::get(arrayType), // zero-initialized
+      node->varName);
+
+  // Optionally add pointer to first element into named map
+  llvm::Value* globalPtr = builder.CreateConstGEP2_32(
+      arrayType, globalVar, 0, 0, node->varName + "_ptr");
+  globalNamedValues[node->varName] = globalPtr;
 }
 
 void LLVMIRGen::visitGlobalVariableNode(GlobalVariableNode* node) {
@@ -117,18 +148,18 @@ void LLVMIRGen::visitGlobalVariableNode(GlobalVariableNode* node) {
 void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
   // set the named values for this context used by stack
   std::unordered_map<std::string, llvm::Value*> copiedNamedValues;
+
   for (auto& arg : namedValues) {
-    std::string reg = arg.first; // e.g., "eax", "ebx"
+    std::string reg = arg.first;
     if (reg == "eax" || reg == "ebx" || reg == "ecx" || reg == "edx" ||
         reg == "esi" || reg == "edi") {
       copiedNamedValues[reg] = arg.second;
     }
   }
-  // Clear the named values for the new function context
+
   namedValues.clear();
-  // Clear the global named values for the new function context
   namedValues = copiedNamedValues;
-  copiedNamedValues.clear();
+
   llvm::Function* function = nullptr;
   // Check if the function is already declared
   if (definedFunctionsMap.find(node->name) != definedFunctionsMap.end()) {
@@ -144,19 +175,6 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
 
   llvm::BasicBlock* entryBB = nullptr;
   bool isFirstBlock = true;
-  // Declare all labels (basic blocks) upfront without generating IR
-  // instructions
-  // std::vector<std::pair<std::string, BasicBlockNode*>> labelVector;
-  // for (const auto& labelPair : Parser::parserLabelMap) {
-  //   const std::string& labelName = labelPair.first;
-
-  //   // Check if the label is not in parserFunctionMap
-  //   if (Parser::parserFunctionMap.find(labelName) ==
-  //   Parser::parserFunctionMap.end()) {
-  //     labelVector.push_back(std::make_pair(labelName,
-  //     Parser::parserLabelMap[labelName]));
-  //   }
-  // }
   std::vector<BasicBlockNode*> labelVector;
   for (const auto& function : Parser::parserLabelMap) {
     std::string functionName = function.first;
@@ -1144,14 +1162,6 @@ void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {
 
   std::string functionName = calleeNode->base;
   std::vector<llvm::Value*> args;
-  for (auto& arg : namedValues) {
-    std::string reg = arg.first; // e.g., "eax", "ebx"
-    if (reg == "eax" || reg == "ebx" || reg == "ecx" || reg == "edx" ||
-        reg == "esi" || reg == "edi") {
-      args.push_back(arg.second);
-    }
-  }
-  // Evaluate argument expressions
   for (size_t i = 1; i < node->operands.size(); ++i) {
     llvm::Value* arg = castInputTypes(
         node->operands[i].get(), check_operandType(node->operands[i].get()));
@@ -1182,7 +1192,6 @@ void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {
         funcType, llvm::Function::ExternalLinkage, functionName, module);
     definedFunctionsMap[functionName] = calleeFunction;
   }
-
   llvm::CallInst* call = builder.CreateCall(calleeFunction, args);
   call->setTailCall(false);
 
@@ -1210,7 +1219,8 @@ void LLVMIRGen::handleDivInstructionNode(InstructionNode* node) {
 
   llvm::Value* eaxPtr = namedValues["eax"];
   llvm::Value* edxPtr = namedValues["edx"];
-
+  // keep the track of changed types to cast them to the initial type
+  std::vector<std::string> changedTypes;
   if (!eaxPtr || !eaxPtr->getType()->isPointerTy()) {
     std::cerr
         << "Warning: EAX is not initialized as a pointer. Allocating it.\n";
@@ -1220,6 +1230,7 @@ void LLVMIRGen::handleDivInstructionNode(InstructionNode* node) {
         llvm::ConstantInt::get(context, llvm::APInt(32, 0)), allocaInst);
     namedValues["eax"] = allocaInst;
     eaxPtr = allocaInst;
+    changedTypes.push_back("eax");
   }
 
   if (!edxPtr || !edxPtr->getType()->isPointerTy()) {
@@ -1231,6 +1242,7 @@ void LLVMIRGen::handleDivInstructionNode(InstructionNode* node) {
         llvm::ConstantInt::get(context, llvm::APInt(32, 0)), allocaInst);
     namedValues["edx"] = allocaInst;
     edxPtr = allocaInst;
+    changedTypes.push_back("edx");
   }
 
   // Load EAX and EDX (assumed initialized earlier)
@@ -1279,7 +1291,18 @@ void LLVMIRGen::handleDivInstructionNode(InstructionNode* node) {
       builder.CreateTrunc(quotient, llvm::Type::getInt32Ty(context), "quot32");
   llvm::Value* r32 =
       builder.CreateTrunc(remainder, llvm::Type::getInt32Ty(context), "rem32");
-
+  // before storing the values, we need to check if they are pointers
+  if (std::find(changedTypes.begin(), changedTypes.end(), "eax") !=
+      changedTypes.end()) {
+    q32 =
+        builder.CreatePtrToInt(q32, llvm::Type::getInt32Ty(context), "q32_int");
+  }
+  if (std::find(changedTypes.begin(), changedTypes.end(), "edx") !=
+      changedTypes.end()) {
+    r32 =
+        builder.CreatePtrToInt(r32, llvm::Type::getInt32Ty(context), "r32_int");
+  }
+  // Store the results back to EAX and EDX
   builder.CreateStore(q32, namedValues["eax"]);
   builder.CreateStore(r32, namedValues["edx"]);
 }

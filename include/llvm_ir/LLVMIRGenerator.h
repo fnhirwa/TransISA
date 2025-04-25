@@ -142,6 +142,7 @@ class LLVMIRGen {
       BasicBlockNode* node,
       const std::vector<llvm::BasicBlock*>& orderedBlocks);
   void visitInstructionNode(InstructionNode* node);
+  void visitBssNode(BssNode* node);
 
   // different instruction set
   void handleBinaryOpNode(InstructionNode* node);
