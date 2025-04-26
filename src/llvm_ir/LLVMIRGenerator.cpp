@@ -153,6 +153,8 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
     std::string reg = arg.first;
     if (reg == "eax" || reg == "ebx" || reg == "ecx" || reg == "edx" ||
         reg == "esi" || reg == "edi") {
+      if (!arg.second)
+        continue;
       copiedNamedValues[reg] = arg.second;
     }
   }
@@ -480,15 +482,16 @@ void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
         llvm::ConstantInt::get(context, llvm::APInt(32, intLit->value, true));
   } else if (srcType == "reg") {
     auto* srcReg = dynamic_cast<RegisterNode*>(srcNode);
-    srcValue = getNamedValue(srcReg->registerName);
-
-    if (!srcValue) {
+    llvm::Value* srcPtr = getNamedValue(srcReg->registerName);
+    if (!srcPtr) {
       std::cerr << "Error: Source register " << srcReg->registerName
                 << " not found " << "Allocating it.\n";
-      llvm::Value* allocaInst = builder.CreateAlloca(
+      srcPtr = builder.CreateAlloca(
           llvm::Type::getInt32Ty(context), nullptr, srcReg->registerName);
-      namedValues[srcReg->registerName] = allocaInst;
+      namedValues[srcReg->registerName] = srcPtr;
     }
+    srcValue = builder.CreateLoad(
+        llvm::Type::getInt32Ty(context), srcPtr, srcReg->registerName + "_val");
   } else if (srcType == "mem") {
     auto* memNode = dynamic_cast<MemoryNode*>(srcNode);
     if (!memNode) {
@@ -548,13 +551,12 @@ void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
   // store the value in a register
   if (destType == "reg") {
     auto* destReg = dynamic_cast<RegisterNode*>(destNode);
-    if (!getNamedValue(destReg->registerName)) {
-      llvm::Value* allocaInst = builder.CreateAlloca(
-          llvm::Type::getInt32Ty(context), nullptr, destReg->registerName);
-      namedValues[destReg->registerName] = allocaInst;
-    }
-
     llvm::Value* destPtr = getNamedValue(destReg->registerName);
+    if (!destPtr) {
+      destPtr = builder.CreateAlloca(
+          llvm::Type::getInt32Ty(context), nullptr, destReg->registerName);
+      namedValues[destReg->registerName] = destPtr;
+    }
     // ensure that the destination is a pointer
     if (!destPtr->getType()->isPointerTy()) {
       destPtr = builder.CreateAlloca(
@@ -1375,12 +1377,11 @@ void LLVMIRGen::handleStackOperationInstructionNode(InstructionNode* node) {
 
   llvm::Type* operandType = nullptr;
   llvm::Value* valueToPush = nullptr;
-
   if (isPush) {
-    valueToPush = castInputTypes(
-        node->operands[0].get(), check_operandType(node->operands[0].get()));
+    valueToPush = getNamedValue(regNode->registerName);
     if (!valueToPush) {
-      std::cerr << "[Error] Failed to generate operand for 'push'\n";
+      std::cerr << "[Error] Register '" << regNode->registerName
+                << "' not found for 'push'\n";
       return;
     }
     operandType = valueToPush->getType();
@@ -1392,7 +1393,6 @@ void LLVMIRGen::handleStackOperationInstructionNode(InstructionNode* node) {
       return;
     }
   }
-
   llvm::AllocaInst* rsp = nullptr;
   llvm::AllocaInst* stackMem = nullptr;
 
@@ -1424,7 +1424,6 @@ void LLVMIRGen::handleStackOperationInstructionNode(InstructionNode* node) {
         stackMem,
         {llvm::ConstantInt::get(int32Ty, 0), idx},
         "stack_idx_" + currentFunc->getName().str());
-
     builder.CreateStore(valueToPush, gep);
 
     llvm::Value* newRsp =
