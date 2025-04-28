@@ -328,6 +328,14 @@ void LLVMIRGen::visitInstructionNode(InstructionNode* node) {
   } else if (node->opcode == "ret") {
     handleRetInstructionNode(node);
     return;
+  } else if (node->opcode == "inc") {
+    handleUnaryInstructionNode(node, "inc");
+    return;
+  } else if (node->opcode == "dec") {
+    handleUnaryInstructionNode(node, "dec");
+    return;
+  } else if (node->opcode == "neg") {
+    handleUnaryInstructionNode(node, "neg");
   } else if (node->opcode == "push" || node->opcode == "pop") {
     handleStackOperationInstructionNode(node);
     return;
@@ -475,6 +483,7 @@ void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
   std::string srcType = check_operandType(srcNode);
 
   llvm::Value* srcValue = nullptr;
+  llvm::Value* srcPtr = nullptr;
 
   if (srcType == "int") {
     auto* intLit = dynamic_cast<IntLiteralNode*>(srcNode);
@@ -482,16 +491,39 @@ void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
         llvm::ConstantInt::get(context, llvm::APInt(32, intLit->value, true));
   } else if (srcType == "reg") {
     auto* srcReg = dynamic_cast<RegisterNode*>(srcNode);
-    llvm::Value* srcPtr = getNamedValue(srcReg->registerName);
-    if (!srcPtr) {
+    llvm::Value* srcRegValue = getNamedValue(srcReg->registerName);
+    if (!srcRegValue) {
       std::cerr << "Error: Source register " << srcReg->registerName
                 << " not found " << "Allocating it.\n";
       srcPtr = builder.CreateAlloca(
           llvm::Type::getInt32Ty(context), nullptr, srcReg->registerName);
       namedValues[srcReg->registerName] = srcPtr;
+      srcValue = builder.CreateLoad(
+          llvm::Type::getInt32Ty(context),
+          srcPtr,
+          srcReg->registerName + "_load");
+    } else {
+      if (srcRegValue->getType()->isPointerTy()) {
+        srcPtr = srcRegValue;
+        srcValue = builder.CreateLoad(
+            llvm::Type::getInt32Ty(context),
+            srcPtr,
+            srcReg->registerName + "_load");
+      } else if (srcRegValue->getType()->isIntegerTy(32)) {
+        srcPtr = builder.CreateIntToPtr(
+            srcRegValue,
+            llvm::PointerType::get(llvm::Type::getInt32Ty(context), 0),
+            srcReg->registerName + "_ptrcast");
+        srcValue = builder.CreateLoad(
+            llvm::Type::getInt32Ty(context),
+            srcPtr,
+            srcReg->registerName + "_load");
+      } else {
+        std::cerr << "Error: Source register " << srcReg->registerName
+                  << " is not of type int32\n";
+        return;
+      }
     }
-    srcValue = builder.CreateLoad(
-        llvm::Type::getInt32Ty(context), srcPtr, srcReg->registerName + "_val");
   } else if (srcType == "mem") {
     auto* memNode = dynamic_cast<MemoryNode*>(srcNode);
     if (!memNode) {
@@ -1442,5 +1474,94 @@ void LLVMIRGen::handleStackOperationInstructionNode(InstructionNode* node) {
 
     llvm::Value* popVal = builder.CreateLoad(operandType, gep);
     namedValues[regNode->registerName] = popVal;
+  }
+}
+
+void LLVMIRGen::handleUnaryInstructionNode(
+    InstructionNode* node,
+    const std::string& opType) {
+  if (node->operands.empty()) {
+    std::cerr << "Error: Unary instruction requires at least one operand\n";
+    return;
+  }
+
+  ASTNode* operandNode = node->operands[0].get();
+  if (!operandNode) {
+    std::cerr << "Error: Operand node is null\n";
+    return;
+  }
+
+  std::string operandType = check_operandType(operandNode);
+
+  llvm::Value* loadedValue = nullptr;
+  llvm::Value* operandPtr = nullptr;
+
+  if (operandType == "reg") {
+    auto* regNode = dynamic_cast<RegisterNode*>(operandNode);
+    llvm::Value* regValue = getNamedValue(regNode->registerName);
+
+    if (!regValue) {
+      operandPtr = builder.CreateAlloca(
+          llvm::Type::getInt32Ty(context), nullptr, regNode->registerName);
+      namedValues[regNode->registerName] = operandPtr;
+      loadedValue = builder.CreateLoad(
+          llvm::Type::getInt32Ty(context),
+          operandPtr,
+          regNode->registerName + "_load");
+    } else {
+      if (regValue->getType()->isPointerTy()) {
+        operandPtr = regValue; // Already a pointer, good
+        loadedValue = builder.CreateLoad(
+            llvm::Type::getInt32Ty(context),
+            operandPtr,
+            regNode->registerName + "_load");
+      } else if (regValue->getType()->isIntegerTy(32)) {
+        // It's an integer but we need to treat it as pointer
+        operandPtr = builder.CreateIntToPtr(
+            regValue,
+            llvm::PointerType::get(llvm::Type::getInt32Ty(context), 0),
+            regNode->registerName + "_ptrcast");
+        loadedValue = builder.CreateLoad(
+            llvm::Type::getInt32Ty(context),
+            operandPtr,
+            regNode->registerName + "_load");
+      } else {
+        std::cerr << "Unsupported register type for unary operation\n";
+        return;
+      }
+    }
+  } else if (operandType == "mem") {
+    auto* memNode = dynamic_cast<MemoryNode*>(operandNode);
+    operandPtr = handleDestinationMemory(memNode);
+    loadedValue = builder.CreateLoad(
+        llvm::Type::getInt32Ty(context), operandPtr, "mem_load");
+  } else {
+    std::cerr << "Error: Unsupported operand type for unary instruction: "
+              << operandType << "\n";
+    return;
+  }
+
+  // Now apply the operation
+  if (opType == "inc") {
+    auto* result = builder.CreateAdd(
+        loadedValue,
+        llvm::ConstantInt::get(context, llvm::APInt(32, 1)),
+        "inc");
+    builder.CreateStore(result, operandPtr);
+    return;
+  } else if (opType == "dec") {
+    auto* result = builder.CreateSub(
+        loadedValue,
+        llvm::ConstantInt::get(context, llvm::APInt(32, 1)),
+        "dec");
+    builder.CreateStore(result, operandPtr);
+    return;
+  } else if (opType == "neg") {
+    auto* result = builder.CreateNeg(loadedValue, "neg");
+    builder.CreateStore(result, operandPtr);
+    return;
+  } else {
+    std::cerr << "Error: Unknown unary operation type: " << opType << "\n";
+    return;
   }
 }

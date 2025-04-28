@@ -146,6 +146,9 @@ class LLVMIRGen {
 
   // different instruction set
   void handleBinaryOpNode(InstructionNode* node);
+  void handleUnaryInstructionNode(
+      InstructionNode* node,
+      const std::string& opType);
   void handleMovInstructionNode(InstructionNode* node);
   void handleLeaInstructionNode(InstructionNode* node);
   void handleSyscallInstructionNode(InstructionNode* node);
