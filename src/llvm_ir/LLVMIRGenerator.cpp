@@ -1,5 +1,9 @@
 #include "llvm_ir/LLVMIRGenerator.h"
 
+/*=============================================================*/
+/*Utility functions for generating inline assembly for syscalls*/
+/*=============================================================*/
+
 std::string generateLinuxARM64InlineAsm(size_t argCount, int syscallNumber) {
   std::ostringstream asmCode;
 
@@ -78,6 +82,210 @@ void SyscallBuilder::emitExitSyscall(
   emitSyscall(
       builder, context, module, {status}, 1, targetABI); // syscall 1 = exit
 }
+
+/*=============================================================*/
+/*              Other utility functions*                       */
+/*=============================================================*/
+
+// Loading or getting the register
+llvm::Value* LLVMIRGen::getOrLoadRegister(const std::string& regName) {
+  llvm::Value* regPtr = getNamedValue(regName);
+  if (!regPtr) {
+    std::cerr << "Error: Source register " << regName << " not found "
+              << "Allocating it.\n";
+    regPtr =
+        builder.CreateAlloca(llvm::Type::getInt32Ty(context), nullptr, regName);
+    builder.CreateStore(
+        llvm::ConstantInt::get(context, llvm::APInt(32, 0)), regPtr);
+    namedValues[regName] = regPtr;
+  }
+  return builder.CreateLoad(
+      llvm::Type::getInt32Ty(context), regPtr, regName + "_load");
+}
+
+// Handling memory node
+llvm::Value* LLVMIRGen::getOrLoadMemory(MemoryNode* memNode) {
+  llvm::Value* baseAddr = nullptr;
+  llvm::Value* offsetVal = nullptr;
+  if (!memNode->base.empty()) {
+    // check if it is a predefined global variable
+    // and create it if not found, for some cases you can find
+    // it in the .bss section which defines the uninitialized data section
+    if (!getNamedValue(memNode->base)) {
+      std::cerr << "Warning: Base register '" << memNode->base
+                << "' not allocated. Allocating now.\n";
+      // initialize the global variable
+      llvm::GlobalVariable* globalVar = new llvm::GlobalVariable(
+          module,
+          llvm::Type::getInt32Ty(context),
+          false,
+          llvm::GlobalValue::ExternalLinkage,
+          llvm::ConstantInt::get(context, llvm::APInt(32, 0)),
+          memNode->base);
+      globalNamedValues[memNode->base] = globalVar; // registered globally
+    }
+    baseAddr = getNamedValue(memNode->base);
+    baseAddr = builder.CreateLoad(
+        llvm::Type::getInt32Ty(context), baseAddr, memNode->base);
+  }
+  if (!memNode->offset.empty()) {
+    try {
+      int offsetInt = std::stoi(memNode->offset);
+      offsetVal =
+          llvm::ConstantInt::get(context, llvm::APInt(32, offsetInt, true));
+    } catch (const std::exception& e) {
+      std::cerr << "Error: Invalid memory offset '" << memNode->offset << "'\n";
+      return nullptr;
+    }
+  }
+  llvm::Value* memAddr = baseAddr;
+  if (offsetVal) {
+    memAddr = builder.CreateAdd(baseAddr, offsetVal, "mem_addr");
+  }
+  llvm::Type* i32PtrType =
+      llvm::PointerType::get(llvm::Type::getInt32Ty(context), 0);
+  llvm::Value* ptr = builder.CreateIntToPtr(memAddr, i32PtrType, "ptr_cast");
+  return ptr;
+}
+
+// Input type casting
+llvm::Value* LLVMIRGen::castInputTypes(
+    ASTNode* inputNode,
+    const std::string nodeType) {
+  llvm::Value* nodeValue = nullptr;
+
+  if (nodeType == "int") {
+    auto* intLit = dynamic_cast<IntLiteralNode*>(inputNode);
+    nodeValue =
+        llvm::ConstantInt::get(context, llvm::APInt(32, intLit->value, true));
+  } else if (nodeType == "reg") {
+    auto* srcReg = dynamic_cast<RegisterNode*>(inputNode);
+    nodeValue = getOrLoadRegister(srcReg->registerName);
+
+    if (!nodeValue) {
+      std::cerr << "Error: Register " << srcReg->registerName << " not found\n";
+      return nullptr;
+    }
+  } else if (nodeType == "mem") {
+    auto* memNode = dynamic_cast<MemoryNode*>(inputNode);
+    if (!memNode) {
+      std::cerr << "Error: Invalid memory operand\n";
+      return nullptr;
+    }
+    llvm::Value* ptr = getOrLoadMemory(memNode);
+    nodeValue =
+        builder.CreateLoad(llvm::Type::getInt32Ty(context), ptr, "mem_load");
+  } else if (nodeType == "str") {
+    auto* strNode = dynamic_cast<StringNode*>(inputNode);
+    if (!strNode || strNode->value.empty()) {
+      std::cerr << "Error: Invalid string operand\n";
+      return nullptr;
+    }
+
+    // Get the ASCII value of the first character in the string
+    char firstChar = strNode->value[0];
+    int asciiValue = static_cast<int>(firstChar);
+
+    // Create an LLVM constant for the ASCII value
+    nodeValue =
+        llvm::ConstantInt::get(context, llvm::APInt(32, asciiValue, true));
+  } else {
+    std::cerr << "Error: Invalid operand type for casting: " << nodeType
+              << "\n";
+    inputNode->print();
+    return nullptr;
+  }
+  return nodeValue;
+}
+
+// Log the function call
+llvm::FunctionCallee LLVMIRGen::getPrintFunction() {
+  llvm::FunctionType* ft = llvm::FunctionType::get(
+      llvm::Type::getInt32Ty(context),
+      llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context)),
+      false);
+
+  return module.getOrInsertFunction("puts", ft);
+}
+
+// take a snapshot of general purpose registers before entering a function call
+void LLVMIRGen::snapshotRegisterState(llvm::Function* func) {
+  std::vector<std::string> regs = {"eax", "ebx", "ecx", "edx", "esi", "edi"};
+  for (const auto& reg : regs) {
+    llvm::Value* regPtr = getNamedValue(reg);
+    if (!regPtr || !regPtr->getType()->isPointerTy())
+      continue;
+
+    llvm::Value* val = builder.CreateLoad(
+        llvm::Type::getInt32Ty(context), regPtr, reg + "_val");
+    llvm::AllocaInst* shadow = builder.CreateAlloca(
+        llvm::Type::getInt32Ty(context), nullptr, reg + "_shadow");
+    builder.CreateStore(val, shadow);
+    namedValues[reg + "_shadow"] = shadow;
+  }
+}
+// restore the register state after the function call
+void LLVMIRGen::restoreRegisterState(llvm::Function* func) {
+  std::vector<std::string> regs = {"eax", "ebx", "ecx", "edx", "esi", "edi"};
+  for (const auto& reg : regs) {
+    if (!namedValues.count(reg + "_shadow"))
+      continue;
+
+    llvm::Value* shadowPtr = getNamedValue(reg + "_shadow");
+    llvm::Value* regPtr = getNamedValue(reg);
+    if (!regPtr || !regPtr->getType()->isPointerTy()) {
+      regPtr =
+          builder.CreateAlloca(llvm::Type::getInt32Ty(context), nullptr, reg);
+      namedValues[reg] = regPtr;
+    }
+    llvm::Value* val = builder.CreateLoad(
+        llvm::Type::getInt32Ty(context), shadowPtr, reg + "_restore");
+    builder.CreateStore(val, regPtr);
+
+    namedValues.erase(reg + "_shadow");
+  }
+}
+// stack memory snapshot
+void LLVMIRGen::snapshotStackState(llvm::Function* func) {
+  if (!rspIntPerFunction.count(func) || !stackMemIntPerFunction.count(func))
+    return;
+  llvm::AllocaInst* savedRsp = builder.CreateAlloca(
+      llvm::Type::getInt32Ty(context), nullptr, "rsp_shadow");
+  llvm::AllocaInst* savedRspPtr = builder.CreateAlloca(
+      llvm::Type::getInt32Ty(context), nullptr, "rsp_ptr_shadow");
+
+  llvm::Value* valRsp = builder.CreateLoad(
+      llvm::Type::getInt32Ty(context), rspIntPerFunction[func]);
+  llvm::Value* valRspPtr = builder.CreateLoad(
+      llvm::Type::getInt32Ty(context), rspPtrPerFunction[func]);
+
+  builder.CreateStore(valRsp, savedRsp);
+  builder.CreateStore(valRspPtr, savedRspPtr);
+
+  namedValues["rsp_shadow"] = savedRsp;
+  namedValues["rsp_ptr_shadow"] = savedRspPtr;
+}
+
+// restore the stack state after the function call
+void LLVMIRGen::restoreStackState(llvm::Function* func) {
+  if (!namedValues.count("rsp_shadow") || !namedValues.count("rsp_ptr_shadow"))
+    return;
+
+  llvm::Value* valRsp = builder.CreateLoad(
+      llvm::Type::getInt32Ty(context), getNamedValue("rsp_shadow"));
+  llvm::Value* valRspPtr = builder.CreateLoad(
+      llvm::Type::getInt32Ty(context), getNamedValue("rsp_ptr_shadow"));
+
+  builder.CreateStore(valRsp, rspIntPerFunction[func]);
+  builder.CreateStore(valRspPtr, rspPtrPerFunction[func]);
+
+  namedValues.erase("rsp_shadow");
+  namedValues.erase("rsp_ptr_shadow");
+}
+
+/*===================================================================*/
+/*                    LLVMIRGen class implementation                 */
+/*===================================================================*/
 
 // This module object is used to store all the IR generated
 // It is a container for all the IR instructions
@@ -357,6 +565,7 @@ void LLVMIRGen::visitInstructionNode(InstructionNode* node) {
 void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
   ASTNode* lhsNode = nullptr;
   ASTNode* rhsNode = nullptr;
+
   if (node->operands.size() == 2) {
     lhsNode = node->operands[0].get();
     rhsNode = node->operands[1].get();
@@ -367,93 +576,81 @@ void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
     lhsNode = node->operands[0].get();
     rhsNode = node->operands[1].get();
   } else {
-    std::cerr << "Error: Binary operation: " << node->opcode
-              << " requires two operands.\n";
+    std::cerr << "Error: Unexpected operand count for '" << node->opcode
+              << "'\n";
     return;
   }
+
   if (!lhsNode || !rhsNode) {
-    std::cerr << "Error: Binary operation requires two operands.\n";
-    return;
-  }
-  // Get the destination register
-  auto* lhsReg = dynamic_cast<RegisterNode*>(lhsNode);
-  if (!lhsReg) {
-    std::cerr << "Error: Left operand must be a register.\n";
+    std::cerr << "Error: Invalid operands for binary operation\n";
     return;
   }
 
-  llvm::Value* lhs = getNamedValue(lhsReg->registerName);
-  if (!lhs) {
-    // Check if the register is initialized
-    // some system calls like xor edi, edi don't
-    // initialize the register
-    std::cerr << "Error: Register " << lhsReg->registerName
-              << " is not initialized. " << "Initializing to 0.\n";
-    lhs = llvm::ConstantInt::get(context, llvm::APInt(32, 0, true));
-    llvm::Value* allocaInst = builder.CreateAlloca(
-        llvm::Type::getInt32Ty(context), nullptr, lhsReg->registerName);
-    builder.CreateStore(lhs, allocaInst);
-    namedValues[lhsReg->registerName] = allocaInst;
-    lhs = builder.CreateLoad(
-        llvm::Type::getInt32Ty(context),
-        allocaInst,
-        "load_" + lhsReg->registerName);
-  }
-
-  // Get the type of the left operand as it can be either a
-  // register or memory location
   std::string lhsType = check_operandType(lhsNode);
   std::string rhsType = check_operandType(rhsNode);
 
+  // Resolve and load LHS value
+  llvm::Value* lhsValue = nullptr;
+  std::string lhsRegister;
   if (lhsType == "reg") {
     auto* lhsReg = dynamic_cast<RegisterNode*>(lhsNode);
-    if (!lhsReg) {
-      std::cerr << "Error: Left operand must be a register.\n";
-      return;
-    }
-
-    llvm::Value* lhs = getNamedValue(lhsReg->registerName);
-  } else if (lhsType == "mem") {
-    auto* lhsMem = dynamic_cast<MemoryNode*>(lhsNode);
-    if (!lhsMem) {
-      std::cerr << "Error: Invalid memory operand\n";
-      return;
-    }
-    llvm::Value* ptr = handleDestinationMemory(lhsMem);
-    llvm::Value* lhs =
-        builder.CreateLoad(llvm::Type::getInt32Ty(context), ptr, "mem_load");
+    lhsRegister = lhsReg->registerName;
+    lhsValue = getOrLoadRegister(lhsRegister);
+  } else if (lhsType == "mem" || lhsType == "int") {
+    lhsValue = castInputTypes(lhsNode, lhsType);
   } else {
-    std::cerr << "Error: Invalid left operand for binary operation.\n";
+    std::cerr << "Error: Unsupported LHS type for binary op\n";
     return;
   }
-  // Ensure lhs is integer
-  if (lhs->getType()->isPointerTy()) {
-    lhs =
-        builder.CreatePtrToInt(lhs, llvm::Type::getInt32Ty(context), "lhs_int");
-  }
-  llvm::Value* rhs = castInputTypes(rhsNode, rhsType);
 
-  if (rhs->getType()->isPointerTy()) {
-    rhs =
-        builder.CreatePtrToInt(rhs, llvm::Type::getInt32Ty(context), "rhs_int");
+  // Resolve and load RHS value
+  llvm::Value* rhsValue = castInputTypes(rhsNode, rhsType);
+  if (!lhsValue || !rhsValue) {
+    std::cerr << "Error: Failed to resolve operands\n";
+    return;
   }
 
-  // Lookup the operation
+  // Promote pointers to int32 when needed
+  if (lhsValue->getType()->isPointerTy()) {
+    lhsValue = builder.CreatePtrToInt(
+        lhsValue, llvm::Type::getInt32Ty(context), "lhs_int");
+  }
+  if (rhsValue->getType()->isPointerTy()) {
+    rhsValue = builder.CreatePtrToInt(
+        rhsValue, llvm::Type::getInt32Ty(context), "rhs_int");
+  }
+
+  // Lookup binary operation function
   auto it = binOpTable.find(node->opcode);
   if (it == binOpTable.end()) {
     std::cerr << "Error: Unsupported binary opcode '" << node->opcode << "'\n";
     return;
   }
-  // Generate the LLVM IR instruction
-  llvm::Value* result = it->second(builder, lhs, rhs);
 
-  // Store the result in the destination register
-  namedValues[lhsReg->registerName] = result;
+  llvm::Value* result = it->second(builder, lhsValue, rhsValue);
+
+  // Store result back into LHS register
+  if (lhsType == "reg") {
+    llvm::Value* destPtr = getNamedValue(lhsRegister);
+    if (!destPtr || !destPtr->getType()->isPointerTy()) {
+      destPtr = builder.CreateAlloca(
+          llvm::Type::getInt32Ty(context), nullptr, lhsRegister);
+      namedValues[lhsRegister] = destPtr;
+    }
+    builder.CreateStore(result, destPtr);
+  } else if (lhsType == "mem") {
+    auto* lhsMem = dynamic_cast<MemoryNode*>(lhsNode);
+    llvm::Value* ptr = getOrLoadMemory(lhsMem);
+    builder.CreateStore(result, ptr);
+  } else {
+    std::cerr << "Error: LHS must be assignable (register or memory)\n";
+  }
 }
 
 void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
   ASTNode* destNode = nullptr;
   ASTNode* srcNode = nullptr;
+
   if (node->operands.size() == 2) {
     destNode = node->operands[0].get();
     srcNode = node->operands[1].get();
@@ -491,88 +688,10 @@ void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
         llvm::ConstantInt::get(context, llvm::APInt(32, intLit->value, true));
   } else if (srcType == "reg") {
     auto* srcReg = dynamic_cast<RegisterNode*>(srcNode);
-    llvm::Value* srcRegValue = getNamedValue(srcReg->registerName);
-    if (!srcRegValue) {
-      std::cerr << "Error: Source register " << srcReg->registerName
-                << " not found " << "Allocating it.\n";
-      srcPtr = builder.CreateAlloca(
-          llvm::Type::getInt32Ty(context), nullptr, srcReg->registerName);
-      namedValues[srcReg->registerName] = srcPtr;
-      srcValue = builder.CreateLoad(
-          llvm::Type::getInt32Ty(context),
-          srcPtr,
-          srcReg->registerName + "_load");
-    } else {
-      if (srcRegValue->getType()->isPointerTy()) {
-        srcPtr = srcRegValue;
-        srcValue = builder.CreateLoad(
-            llvm::Type::getInt32Ty(context),
-            srcPtr,
-            srcReg->registerName + "_load");
-      } else if (srcRegValue->getType()->isIntegerTy(32)) {
-        srcPtr = builder.CreateIntToPtr(
-            srcRegValue,
-            llvm::PointerType::get(llvm::Type::getInt32Ty(context), 0),
-            srcReg->registerName + "_ptrcast");
-        srcValue = builder.CreateLoad(
-            llvm::Type::getInt32Ty(context),
-            srcPtr,
-            srcReg->registerName + "_load");
-      } else {
-        std::cerr << "Error: Source register " << srcReg->registerName
-                  << " is not of type int32\n";
-        return;
-      }
-    }
+    srcValue = getOrLoadRegister(srcReg->registerName);
   } else if (srcType == "mem") {
-    auto* memNode = dynamic_cast<MemoryNode*>(srcNode);
-    if (!memNode) {
-      std::cerr << "Error: Invalid memory operand\n";
-      return;
-    }
-
-    llvm::Value* baseAddr = nullptr;
-    llvm::Value* offsetVal = nullptr;
-
-    if (!memNode->base.empty()) {
-      if (!getNamedValue(memNode->base)) {
-        std::cerr << "Error: Base register " << memNode->base
-                  << " not allocated yet. Allocating it.\n";
-        llvm::GlobalVariable* globalVar = new llvm::GlobalVariable(
-            module,
-            llvm::Type::getInt32Ty(context),
-            false,
-            llvm::GlobalValue::ExternalLinkage,
-            llvm::ConstantInt::get(context, llvm::APInt(32, 0)),
-            memNode->base);
-        globalNamedValues[memNode->base] = globalVar; // registered globally
-      }
-      baseAddr = getNamedValue(memNode->base);
-      baseAddr = builder.CreateLoad(
-          llvm::Type::getInt32Ty(context), baseAddr, memNode->base);
-    }
-
-    if (!memNode->offset.empty()) {
-      try {
-        int offsetInt = std::stoi(memNode->offset);
-        offsetVal =
-            llvm::ConstantInt::get(context, llvm::APInt(32, offsetInt, true));
-      } catch (const std::exception& e) {
-        std::cerr << "Error: Invalid memory offset '" << memNode->offset
-                  << "'\n";
-        return;
-      }
-    }
-
-    llvm::Value* memAddr = baseAddr;
-    if (offsetVal) {
-      memAddr = builder.CreateAdd(baseAddr, offsetVal, "mem_addr");
-    }
-
-    llvm::Type* i32PtrType =
-        llvm::PointerType::get(llvm::Type::getInt32Ty(context), 0);
-    llvm::Value* ptr = builder.CreateIntToPtr(memAddr, i32PtrType, "ptr_cast");
-
+    auto* srcMem = dynamic_cast<MemoryNode*>(srcNode);
+    llvm::Value* ptr = getOrLoadMemory(srcMem);
     srcValue =
         builder.CreateLoad(llvm::Type::getInt32Ty(context), ptr, "mem_load");
   } else {
@@ -584,28 +703,19 @@ void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
   if (destType == "reg") {
     auto* destReg = dynamic_cast<RegisterNode*>(destNode);
     llvm::Value* destPtr = getNamedValue(destReg->registerName);
-    if (!destPtr) {
+    if (!destPtr || !destPtr->getType()->isPointerTy()) {
       destPtr = builder.CreateAlloca(
           llvm::Type::getInt32Ty(context), nullptr, destReg->registerName);
       namedValues[destReg->registerName] = destPtr;
     }
-    // ensure that the destination is a pointer
-    if (!destPtr->getType()->isPointerTy()) {
-      destPtr = builder.CreateAlloca(
-          llvm::Type::getInt32Ty(context), nullptr, destReg->registerName);
-    }
     builder.CreateStore(srcValue, destPtr);
   } else if (destType == "mem") {
     auto* destMem = dynamic_cast<MemoryNode*>(destNode);
-    if (!destMem) {
-      std::cerr << "Error: Invalid memory operand\n";
-      return;
-    }
-    llvm::Value* ptr = handleDestinationMemory(destMem);
+    llvm::Value* ptr = getOrLoadMemory(destMem);
     builder.CreateStore(srcValue, ptr);
   } else {
-    std::cerr << "Error: Destination operand must be a register not of type: "
-              << destType << "\n";
+    std::cerr << "Error: Invalid destination type for 'mov': " << destType
+              << "\n";
     return;
   }
 }
@@ -808,50 +918,6 @@ void LLVMIRGen::handleIntInstructionNode(InstructionNode* node) {
   }
 }
 
-llvm::Value* LLVMIRGen::handleDestinationMemory(MemoryNode* destMem) {
-  llvm::Value* baseAddr = nullptr;
-  llvm::Value* offsetVal = nullptr;
-  if (!destMem->base.empty()) {
-    // check if it is a predefined global variable
-    // and create it if not found, for some cases you can find
-    // it in the .bss section which defines the uninitialized data section
-    if (!getNamedValue(destMem->base)) {
-      std::cerr << "Warning: Base register '" << destMem->base
-                << "' not allocated. Allocating now.\n";
-      // initialize the global variable
-      llvm::GlobalVariable* globalVar = new llvm::GlobalVariable(
-          module,
-          llvm::Type::getInt32Ty(context),
-          false,
-          llvm::GlobalValue::ExternalLinkage,
-          llvm::ConstantInt::get(context, llvm::APInt(32, 0)),
-          destMem->base);
-      globalNamedValues[destMem->base] = globalVar; // registered globally
-    }
-    baseAddr = getNamedValue(destMem->base);
-    baseAddr = builder.CreateLoad(
-        llvm::Type::getInt32Ty(context), baseAddr, destMem->base);
-  }
-  if (!destMem->offset.empty()) {
-    try {
-      int offsetInt = std::stoi(destMem->offset);
-      offsetVal =
-          llvm::ConstantInt::get(context, llvm::APInt(32, offsetInt, true));
-    } catch (const std::exception& e) {
-      std::cerr << "Error: Invalid memory offset '" << destMem->offset << "'\n";
-      return nullptr;
-    }
-  }
-  llvm::Value* memAddr = baseAddr;
-  if (offsetVal) {
-    memAddr = builder.CreateAdd(baseAddr, offsetVal, "mem_addr");
-  }
-  llvm::Type* i32PtrType =
-      llvm::PointerType::get(llvm::Type::getInt32Ty(context), 0);
-  llvm::Value* ptr = builder.CreateIntToPtr(memAddr, i32PtrType, "ptr_cast");
-  return ptr;
-}
-
 void LLVMIRGen::handleSyscallInstructionNode(InstructionNode* node) {}
 
 void LLVMIRGen::handleRetInstructionNode(InstructionNode* node) {
@@ -895,89 +961,6 @@ void LLVMIRGen::handleRetInstructionNode(InstructionNode* node) {
   }
 }
 
-llvm::Value* LLVMIRGen::castInputTypes(
-    ASTNode* inputNode,
-    const std::string nodeType) {
-  llvm::Value* nodeValue = nullptr;
-
-  if (nodeType == "int") {
-    auto* intLit = dynamic_cast<IntLiteralNode*>(inputNode);
-    nodeValue =
-        llvm::ConstantInt::get(context, llvm::APInt(32, intLit->value, true));
-  } else if (nodeType == "reg") {
-    auto* srcReg = dynamic_cast<RegisterNode*>(inputNode);
-    nodeValue = getNamedValue(srcReg->registerName);
-
-    if (!nodeValue) {
-      std::cerr << "Error: Register " << srcReg->registerName << " not found\n";
-      return nullptr;
-    }
-  } else if (nodeType == "mem") {
-    auto* memNode = dynamic_cast<MemoryNode*>(inputNode);
-    if (!memNode) {
-      std::cerr << "Error: Invalid memory operand\n";
-      return nullptr;
-    }
-    llvm::Value* baseAddr = nullptr;
-    llvm::Value* offsetVal = nullptr;
-
-    if (!memNode->base.empty()) {
-      if (!getNamedValue(memNode->base)) {
-        std::cerr << "Error: Base register " << memNode->base
-                  << " not allocated\n";
-        return nullptr;
-      }
-      baseAddr = getNamedValue(memNode->base);
-      baseAddr = builder.CreateLoad(
-          llvm::Type::getInt32Ty(context), baseAddr, memNode->base);
-    }
-
-    if (!memNode->offset.empty()) {
-      try {
-        int offsetInt = std::stoi(memNode->offset);
-        offsetVal =
-            llvm::ConstantInt::get(context, llvm::APInt(32, offsetInt, true));
-      } catch (const std::exception& e) {
-        std::cerr << "Error: Invalid memory offset '" << memNode->offset
-                  << "'\n";
-        return nullptr;
-      }
-    }
-
-    llvm::Value* memAddr = baseAddr;
-    if (offsetVal) {
-      memAddr = builder.CreateAdd(baseAddr, offsetVal, "mem_addr");
-    }
-
-    llvm::Type* i32PtrType =
-        llvm::PointerType::get(llvm::Type::getInt32Ty(context), 0);
-    llvm::Value* ptr = builder.CreateIntToPtr(memAddr, i32PtrType, "ptr_cast");
-
-    nodeValue =
-        builder.CreateLoad(llvm::Type::getInt32Ty(context), ptr, "mem_load");
-  } else if (nodeType == "str") {
-    auto* strNode = dynamic_cast<StringNode*>(inputNode);
-    if (!strNode || strNode->value.empty()) {
-      std::cerr << "Error: Invalid string operand\n";
-      return nullptr;
-    }
-
-    // Get the ASCII value of the first character in the string
-    char firstChar = strNode->value[0];
-    int asciiValue = static_cast<int>(firstChar);
-
-    // Create an LLVM constant for the ASCII value
-    nodeValue =
-        llvm::ConstantInt::get(context, llvm::APInt(32, asciiValue, true));
-  } else {
-    std::cerr << "Error: Invalid operand type for casting: " << nodeType
-              << "\n";
-    inputNode->print();
-    return nullptr;
-  }
-  return nodeValue;
-}
-
 void LLVMIRGen::handleCompareInstructionNode(InstructionNode* node) {
   if (node->operands.size() != 2) {
     std::cerr
@@ -990,6 +973,7 @@ void LLVMIRGen::handleCompareInstructionNode(InstructionNode* node) {
   // destination register for comparison it should also be a memory
   std::string lhsType = check_operandType(lhsNode);
   std::string rhsType = check_operandType(rhsNode);
+
   if (lhsType != "reg" && lhsType != "mem" && lhsType != "int") {
     std::cerr << "Error: Left operand must be a supported type.\n";
     return;
@@ -1004,26 +988,24 @@ void LLVMIRGen::handleCompareInstructionNode(InstructionNode* node) {
     std::cerr << "Error: Invalid operands for comparison\n";
     return;
   }
+  if (lhsValue->getType()->isPointerTy())
+    lhsValue =
+        builder.CreatePtrToInt(lhsValue, llvm::Type::getInt32Ty(context));
+
+  if (rhsValue->getType()->isPointerTy())
+    rhsValue =
+        builder.CreatePtrToInt(rhsValue, llvm::Type::getInt32Ty(context));
+
   if (node->opcode == "cmp") {
-    // the operands should be integers not pointers
-    if (lhsValue->getType()->isPointerTy()) {
-      lhsValue =
-          builder.CreatePtrToInt(lhsValue, llvm::Type::getInt32Ty(context));
-    }
-    if (rhsValue->getType()->isPointerTy()) {
-      rhsValue =
-          builder.CreatePtrToInt(rhsValue, llvm::Type::getInt32Ty(context));
-    }
-    // Ensure both values are of the same type
     llvm::Value* result = builder.CreateSub(lhsValue, rhsValue, "cmp_tmp");
 
     // Update Zero Flag (ZF)
     ContextCPUState.zeroFlag = builder.CreateICmpEQ(
-        result, llvm::ConstantInt::get(lhsValue->getType(), 0), "zeroFlag");
+        result, llvm::ConstantInt::get(result->getType(), 0), "zeroFlag");
 
     // Update Sign Flag (SF)
     ContextCPUState.signFlag = builder.CreateICmpSLT(
-        result, llvm::ConstantInt::get(lhsValue->getType(), 0), "signFlag");
+        result, llvm::ConstantInt::get(result->getType(), 0), "signFlag");
 
     // Update Carry Flag (CF)
     ContextCPUState.carryFlag =
@@ -1035,33 +1017,27 @@ void LLVMIRGen::handleCompareInstructionNode(InstructionNode* node) {
     llvm::Value* rhsSign = builder.CreateICmpSLT(
         rhsValue, llvm::ConstantInt::get(rhsValue->getType(), 0));
     llvm::Value* resultSign = builder.CreateICmpSLT(
-        result, llvm::ConstantInt::get(lhsValue->getType(), 0));
+        result, llvm::ConstantInt::get(result->getType(), 0));
+
     ContextCPUState.overflowFlag = builder.CreateXor(
         builder.CreateXor(lhsSign, rhsSign), resultSign, "overflowFlag");
   } else if (node->opcode == "test") {
-    if (lhsValue->getType()->isPointerTy()) {
-      lhsValue =
-          builder.CreatePtrToInt(lhsValue, llvm::Type::getInt32Ty(context));
-    }
-    if (rhsValue->getType()->isPointerTy()) {
-      rhsValue =
-          builder.CreatePtrToInt(rhsValue, llvm::Type::getInt32Ty(context));
-    }
     llvm::Value* result = builder.CreateAnd(lhsValue, rhsValue, "test_tmp");
 
     // Update Zero Flag (ZF): Set if result is zero
     ContextCPUState.zeroFlag = builder.CreateICmpEQ(
-        result, llvm::ConstantInt::get(lhsValue->getType(), 0), "zeroFlag");
+        result, llvm::ConstantInt::get(result->getType(), 0), "zeroFlag");
 
     // Update Sign Flag (SF): Set if result is negative
     ContextCPUState.signFlag = builder.CreateICmpSLT(
-        result, llvm::ConstantInt::get(lhsValue->getType(), 0), "signFlag");
+        result, llvm::ConstantInt::get(result->getType(), 0), "signFlag");
 
     // Clear Carry Flag (CF)
     ContextCPUState.carryFlag = llvm::ConstantInt::getFalse(context);
 
     // Clear Overflow Flag (OF)
     ContextCPUState.overflowFlag = llvm::ConstantInt::getFalse(context);
+
   } else {
     std::cerr << "This comparison instruction is not supported yet!!: "
               << node->opcode << "\n";
@@ -1070,119 +1046,79 @@ void LLVMIRGen::handleCompareInstructionNode(InstructionNode* node) {
 }
 
 void LLVMIRGen::handleBranchingInstructions(InstructionNode* node) {
-  llvm::Function* function = builder.GetInsertBlock()->getParent();
-
-  ASTNode* branchLabel = node->operands[0].get();
-  if (!branchLabel) {
-    std::cerr << "Error: No label provided for: " << node->opcode
-              << " instruction\n";
+  if (node->operands.size() != 1) {
+    std::cerr << "Error: Missing branch target for '" << node->opcode << "'\n";
     return;
   }
 
-  auto* labelNode = dynamic_cast<MemoryNode*>(branchLabel);
+  auto* labelNode = dynamic_cast<MemoryNode*>(node->operands[0].get());
   if (!labelNode) {
-    std::cerr << "Error: Invalid label type for: " << node->opcode
-              << " instruction\n";
+    std::cerr << "Error: Invalid label type for branch\n";
     return;
   }
 
   std::string targetLabel = entryBlockNames[labelNode->base];
-  if (targetLabel.empty()) {
-    std::cerr << "Error: Empty label for: " << node->opcode << " instruction\n";
-    return;
-  }
-
-  // Ensure the label exists in the labelMap
   if (labelMap.find(targetLabel) == labelMap.end()) {
-    std::cerr << "Error: Target label '" << targetLabel
-              << "' not found in labelMap\n";
+    std::cerr << "Error: Branch target '" << targetLabel << "' not found\n";
     return;
   }
 
-  llvm::BasicBlock* trueBB = labelMap[targetLabel];
+  llvm::BasicBlock* trueBlock = labelMap[targetLabel];
+  llvm::Function* currentFunc = builder.GetInsertBlock()->getParent();
 
-  std::string opcode = node->opcode;
-  llvm::Value* condition = nullptr;
-
-  // Determine the condition based on the opcode
-  if (opcode == "je") {
-    condition = ContextCPUState.zeroFlag;
-  } else if (opcode == "jne") {
-    condition = builder.CreateICmpNE(
-        ContextCPUState.zeroFlag,
-        llvm::ConstantInt::getTrue(context),
-        "cmp_ne");
-  } else if (opcode == "jnz") {
-    condition = builder.CreateICmpNE(
-        ContextCPUState.zeroFlag,
-        llvm::ConstantInt::getFalse(context),
-        "cmp_nz");
-  } else if (opcode == "jg") {
-    condition = builder.CreateAnd(
-        builder.CreateICmpEQ(
-            ContextCPUState.overflowFlag, ContextCPUState.signFlag, "cmp_eq"),
-        builder.CreateICmpNE(
-            ContextCPUState.zeroFlag,
-            llvm::ConstantInt::getTrue(context),
-            "cmp_ne"),
-        "jg_condition");
-  } else if (opcode == "jge") {
-    condition = builder.CreateICmpEQ(
-        ContextCPUState.overflowFlag,
-        ContextCPUState.signFlag,
-        "jge_condition");
-  } else if (opcode == "jl") {
-    condition = builder.CreateICmpNE(
-        ContextCPUState.overflowFlag, ContextCPUState.signFlag, "jl_condition");
-  } else if (opcode == "jle") {
-    condition = builder.CreateOr(
-        builder.CreateICmpNE(
-            ContextCPUState.overflowFlag,
-            ContextCPUState.signFlag,
-            "jl_condition"),
-        ContextCPUState.zeroFlag,
-        "jle_condition");
-  } else if (opcode == "jc") {
-    condition = ContextCPUState.carryFlag;
-  } else if (opcode == "jnc") {
-    condition = builder.CreateICmpNE(
-        ContextCPUState.carryFlag,
-        llvm::ConstantInt::getTrue(context),
-        "jnc_condition");
-  } else if (opcode == "jmp") {
-    builder.CreateBr(trueBB);
-    builder.SetInsertPoint(trueBB); // Set insertion point to target block
+  // Handle unconditional jump first
+  if (node->opcode == "jmp") {
+    builder.CreateBr(trueBlock);
+    builder.SetInsertPoint(trueBlock);
     return;
+  }
+
+  // Conditional
+  llvm::Value* cond = nullptr;
+
+  if (node->opcode == "je" || node->opcode == "jz") {
+    cond = ContextCPUState.zeroFlag;
+  } else if (node->opcode == "jne" || node->opcode == "jnz") {
+    cond = builder.CreateNot(ContextCPUState.zeroFlag, "not_zf");
+  } else if (node->opcode == "jg") {
+    // (ZF == 0) && (SF == OF)
+    llvm::Value* zf0 = builder.CreateNot(ContextCPUState.zeroFlag, "not_zf");
+    llvm::Value* s_eq_o = builder.CreateICmpEQ(
+        ContextCPUState.signFlag, ContextCPUState.overflowFlag, "sf_eq_of");
+    cond = builder.CreateAnd(zf0, s_eq_o, "jg_cond");
+  } else if (node->opcode == "jge") {
+    cond = builder.CreateICmpEQ(
+        ContextCPUState.signFlag, ContextCPUState.overflowFlag, "jge_cond");
+  } else if (node->opcode == "jl") {
+    cond = builder.CreateICmpNE(
+        ContextCPUState.signFlag, ContextCPUState.overflowFlag, "jl_cond");
+  } else if (node->opcode == "jle") {
+    llvm::Value* s_ne_o = builder.CreateICmpNE(
+        ContextCPUState.signFlag, ContextCPUState.overflowFlag);
+    cond = builder.CreateOr(s_ne_o, ContextCPUState.zeroFlag, "jle_cond");
+  } else if (node->opcode == "jc") {
+    cond = ContextCPUState.carryFlag;
+  } else if (node->opcode == "jnc") {
+    cond = builder.CreateNot(ContextCPUState.carryFlag, "not_cf");
   } else {
-    std::cerr << "Error: Unsupported branching opcode " << opcode << "\n";
+    std::cerr << "Error: Unsupported branch opcode: " << node->opcode << "\n";
     return;
   }
 
-  if (!condition) {
-    std::cerr << "Error: Failed to generate condition for branch instruction\n";
-    return;
-  }
-
-  static llvm::BasicBlock* commonFalseBB = nullptr;
-  if (!commonFalseBB) {
-    commonFalseBB =
-        llvm::BasicBlock::Create(context, "FalseBasicBlock", function);
-  }
-
-  // Create the conditional branch
-  builder.CreateCondBr(condition, trueBB, commonFalseBB);
-
-  // Update the insertion point to the false block
-  builder.SetInsertPoint(commonFalseBB);
+  // Fallback: create a dummy false block if not terminated
+  llvm::BasicBlock* falseBlock =
+      llvm::BasicBlock::Create(context, "branch_fallback", currentFunc);
+  builder.CreateCondBr(cond, trueBlock, falseBlock);
+  builder.SetInsertPoint(falseBlock);
 }
 
-// when we have a function call
 void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {
   llvm::Function* parentFunction = builder.GetInsertBlock()->getParent();
   if (!parentFunction) {
     std::cerr << "Error: No parent function for call instruction\n";
     return;
   }
+
   if (node->operands.size() < 1) {
     std::cerr << "Error: Call instruction missing callee operand\n";
     return;
@@ -1200,10 +1136,6 @@ void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {
     llvm::Value* arg = castInputTypes(
         node->operands[i].get(), check_operandType(node->operands[i].get()));
     if (!arg) {
-      std::cerr << "Error: Failed to evaluate operand " << i << "\n";
-      return;
-    }
-    if (!arg) {
       std::cerr << "Error: Failed to evaluate argument " << i << "\n";
       return;
     }
@@ -1211,7 +1143,6 @@ void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {
   }
 
   llvm::Function* calleeFunction = nullptr;
-
   if (definedFunctionsMap.count(functionName)) {
     calleeFunction = definedFunctionsMap[functionName];
   } else {
@@ -1219,6 +1150,7 @@ void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {
     for (auto* arg : args) {
       argTypes.push_back(arg->getType());
     }
+
     llvm::FunctionType* funcType = llvm::FunctionType::get(
         llvm::Type::getVoidTy(context), argTypes, false);
 
@@ -1226,128 +1158,84 @@ void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {
         funcType, llvm::Function::ExternalLinkage, functionName, module);
     definedFunctionsMap[functionName] = calleeFunction;
   }
+
+  // Snapshot caller-saved registers and stack
+  snapshotRegisterState(parentFunction);
+  snapshotRegisterState(parentFunction);
+
+  // Emit function call
   llvm::CallInst* call = builder.CreateCall(calleeFunction, args);
   call->setTailCall(false);
 
-  // Optional: use the result if not void
-  if (!calleeFunction->getReturnType()->isVoidTy()) {
-    llvm::Value* result = call;
-    // Store result to stack or variable table
-  }
+  // Restore caller-saved registers and stack
+  restoreStackState(parentFunction);
+  restoreRegisterState(parentFunction);
+  llvm::Value* retVal = getOrLoadRegister("eax");
 }
 
 void LLVMIRGen::handleDivInstructionNode(InstructionNode* node) {
   if (node->operands.size() != 1) {
-    std::cerr << "Error: div expects a single operand (the divisor).\n";
+    std::cerr << "Error: 'div' expects one operand (the divisor)\n";
     return;
   }
 
-  ASTNode* divisorNode = node->operands[0].get();
-  std::string divisorType = check_operandType(divisorNode);
-  llvm::Value* divisor = castInputTypes(divisorNode, divisorType);
+  llvm::Value* divisor = castInputTypes(
+      node->operands[0].get(), check_operandType(node->operands[0].get()));
+  if (!divisor)
+    return;
 
-  if (divisor->getType()->isPointerTy()) {
+  if (divisor->getType()->isPointerTy())
     divisor = builder.CreatePtrToInt(
         divisor, llvm::Type::getInt32Ty(context), "divisor_int");
-  }
 
-  llvm::Value* eaxPtr = namedValues["eax"];
-  llvm::Value* edxPtr = namedValues["edx"];
-  // keep the track of changed types to cast them to the initial type
-  std::vector<std::string> changedTypes;
-  if (!eaxPtr || !eaxPtr->getType()->isPointerTy()) {
-    std::cerr
-        << "Warning: EAX is not initialized as a pointer. Allocating it.\n";
-    llvm::Value* allocaInst =
-        builder.CreateAlloca(llvm::Type::getInt32Ty(context), nullptr, "eax");
-    builder.CreateStore(
-        llvm::ConstantInt::get(context, llvm::APInt(32, 0)), allocaInst);
-    namedValues["eax"] = allocaInst;
-    eaxPtr = allocaInst;
-    changedTypes.push_back("eax");
-  }
+  // Load EAX and EDX
+  llvm::Value* eaxVal = getOrLoadRegister("eax");
+  llvm::Value* edxVal = getOrLoadRegister("edx");
 
-  if (!edxPtr || !edxPtr->getType()->isPointerTy()) {
-    std::cerr
-        << "Warning: EDX is not initialized as a pointer. Allocating it.\n";
-    llvm::Value* allocaInst =
-        builder.CreateAlloca(llvm::Type::getInt32Ty(context), nullptr, "edx");
-    builder.CreateStore(
-        llvm::ConstantInt::get(context, llvm::APInt(32, 0)), allocaInst);
-    namedValues["edx"] = allocaInst;
-    edxPtr = allocaInst;
-    changedTypes.push_back("edx");
-  }
-
-  // Load EAX and EDX (assumed initialized earlier)
-  llvm::Value* eaxVal =
-      builder.CreateLoad(llvm::Type::getInt32Ty(context), eaxPtr, "load_eax");
-  llvm::Value* edxVal =
-      builder.CreateLoad(llvm::Type::getInt32Ty(context), edxPtr, "load_edx");
-
-  // Combine EDX:EAX into a 64-bit dividend
-  llvm::Value* edxExt =
-      builder.CreateZExt(edxVal, llvm::Type::getInt64Ty(context), "zext_edx");
+  // Extend to 64-bit
   llvm::Value* eaxExt =
       builder.CreateZExt(eaxVal, llvm::Type::getInt64Ty(context), "zext_eax");
+  llvm::Value* edxExt =
+      builder.CreateZExt(edxVal, llvm::Type::getInt64Ty(context), "zext_edx");
 
-  llvm::Value* dividend = builder.CreateShl(
-      edxExt, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 32));
-  dividend = builder.CreateOr(dividend, eaxExt, "dividend");
+  llvm::Value* dividend = builder.CreateOr(
+      builder.CreateShl(
+          edxExt, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 32)),
+      eaxExt,
+      "dividend");
+
+  llvm::Value* divisor64 = builder.CreateZExt(
+      divisor, llvm::Type::getInt64Ty(context), "divisor_zext");
 
   // Zero-check
   llvm::Value* isZero = builder.CreateICmpEQ(
-      divisor, llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0));
-  llvm::Function* parentFunc = builder.GetInsertBlock()->getParent();
-  llvm::BasicBlock* divOkBB =
-      llvm::BasicBlock::Create(context, "div.ok", parentFunc);
-  llvm::BasicBlock* divErrBB =
-      llvm::BasicBlock::Create(context, "div.err", parentFunc);
+      divisor64, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0));
+  llvm::Function* func = builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock* divOk = llvm::BasicBlock::Create(context, "div.ok", func);
+  llvm::BasicBlock* divErr = llvm::BasicBlock::Create(context, "div.err", func);
 
-  builder.CreateCondBr(isZero, divErrBB, divOkBB);
+  builder.CreateCondBr(isZero, divErr, divOk);
 
-  builder.SetInsertPoint(divErrBB);
+  builder.SetInsertPoint(divErr);
   builder.CreateCall(
       getPrintFunction(),
       {builder.CreateGlobalStringPtr("Divide by zero error\n")});
   builder.CreateUnreachable();
 
-  builder.SetInsertPoint(divOkBB);
-
-  llvm::Value* divisor64 = builder.CreateZExt(
-      divisor, llvm::Type::getInt64Ty(context), "zext_divisor");
-
+  builder.SetInsertPoint(divOk);
   llvm::Value* quotient = builder.CreateUDiv(dividend, divisor64, "quotient");
   llvm::Value* remainder = builder.CreateURem(dividend, divisor64, "remainder");
 
-  // Truncate results back to 32-bit and store in EAX and EDX
+  // Truncate and store into registers
   llvm::Value* q32 =
       builder.CreateTrunc(quotient, llvm::Type::getInt32Ty(context), "quot32");
   llvm::Value* r32 =
       builder.CreateTrunc(remainder, llvm::Type::getInt32Ty(context), "rem32");
-  // before storing the values, we need to check if they are pointers
-  if (std::find(changedTypes.begin(), changedTypes.end(), "eax") !=
-      changedTypes.end()) {
-    q32 =
-        builder.CreatePtrToInt(q32, llvm::Type::getInt32Ty(context), "q32_int");
-  }
-  if (std::find(changedTypes.begin(), changedTypes.end(), "edx") !=
-      changedTypes.end()) {
-    r32 =
-        builder.CreatePtrToInt(r32, llvm::Type::getInt32Ty(context), "r32_int");
-  }
-  // Store the results back to EAX and EDX
-  builder.CreateStore(q32, namedValues["eax"]);
-  builder.CreateStore(r32, namedValues["edx"]);
-}
 
-llvm::FunctionCallee LLVMIRGen::getPrintFunction() {
-  llvm::FunctionType* ft = llvm::FunctionType::get(
-      llvm::Type::getInt32Ty(context),
-      llvm::PointerType::getUnqual(llvm::Type::getInt8Ty(context)),
-      false);
-
-  return module.getOrInsertFunction("puts", ft);
+  llvm::Value* eaxPtr = getNamedValue("eax");
+  llvm::Value* edxPtr = getNamedValue("edx");
+  builder.CreateStore(q32, eaxPtr);
+  builder.CreateStore(r32, edxPtr);
 }
 
 void LLVMIRGen::handleLoopInstructionNode(InstructionNode* node) {}
@@ -1480,88 +1368,56 @@ void LLVMIRGen::handleStackOperationInstructionNode(InstructionNode* node) {
 void LLVMIRGen::handleUnaryInstructionNode(
     InstructionNode* node,
     const std::string& opType) {
-  if (node->operands.empty()) {
-    std::cerr << "Error: Unary instruction requires at least one operand\n";
+  if (node->operands.size() != 1) {
+    std::cerr << "Error: Unary instruction requires exactly one operand\n";
     return;
   }
 
   ASTNode* operandNode = node->operands[0].get();
-  if (!operandNode) {
-    std::cerr << "Error: Operand node is null\n";
-    return;
-  }
-
   std::string operandType = check_operandType(operandNode);
-
-  llvm::Value* loadedValue = nullptr;
   llvm::Value* operandPtr = nullptr;
+  llvm::Value* value = nullptr;
 
   if (operandType == "reg") {
     auto* regNode = dynamic_cast<RegisterNode*>(operandNode);
-    llvm::Value* regValue = getNamedValue(regNode->registerName);
+    operandPtr = getNamedValue(regNode->registerName);
 
-    if (!regValue) {
+    if (!operandPtr || !operandPtr->getType()->isPointerTy()) {
       operandPtr = builder.CreateAlloca(
           llvm::Type::getInt32Ty(context), nullptr, regNode->registerName);
       namedValues[regNode->registerName] = operandPtr;
-      loadedValue = builder.CreateLoad(
-          llvm::Type::getInt32Ty(context),
-          operandPtr,
-          regNode->registerName + "_load");
-    } else {
-      if (regValue->getType()->isPointerTy()) {
-        operandPtr = regValue; // Already a pointer, good
-        loadedValue = builder.CreateLoad(
-            llvm::Type::getInt32Ty(context),
-            operandPtr,
-            regNode->registerName + "_load");
-      } else if (regValue->getType()->isIntegerTy(32)) {
-        // It's an integer but we need to treat it as pointer
-        operandPtr = builder.CreateIntToPtr(
-            regValue,
-            llvm::PointerType::get(llvm::Type::getInt32Ty(context), 0),
-            regNode->registerName + "_ptrcast");
-        loadedValue = builder.CreateLoad(
-            llvm::Type::getInt32Ty(context),
-            operandPtr,
-            regNode->registerName + "_load");
-      } else {
-        std::cerr << "Unsupported register type for unary operation\n";
-        return;
-      }
     }
+
+    value = builder.CreateLoad(
+        llvm::Type::getInt32Ty(context),
+        operandPtr,
+        regNode->registerName + "_load");
+
   } else if (operandType == "mem") {
     auto* memNode = dynamic_cast<MemoryNode*>(operandNode);
-    operandPtr = handleDestinationMemory(memNode);
-    loadedValue = builder.CreateLoad(
+    operandPtr = getOrLoadMemory(memNode);
+    value = builder.CreateLoad(
         llvm::Type::getInt32Ty(context), operandPtr, "mem_load");
+
   } else {
     std::cerr << "Error: Unsupported operand type for unary instruction: "
               << operandType << "\n";
     return;
   }
 
-  // Now apply the operation
+  llvm::Value* result = nullptr;
   if (opType == "inc") {
-    auto* result = builder.CreateAdd(
-        loadedValue,
-        llvm::ConstantInt::get(context, llvm::APInt(32, 1)),
-        "inc");
-    builder.CreateStore(result, operandPtr);
-    return;
+    result = builder.CreateAdd(
+        value, llvm::ConstantInt::get(context, llvm::APInt(32, 1)), "inc");
   } else if (opType == "dec") {
-    auto* result = builder.CreateSub(
-        loadedValue,
-        llvm::ConstantInt::get(context, llvm::APInt(32, 1)),
-        "dec");
-    builder.CreateStore(result, operandPtr);
-    return;
+    result = builder.CreateSub(
+        value, llvm::ConstantInt::get(context, llvm::APInt(32, 1)), "dec");
   } else if (opType == "neg") {
-    auto* result = builder.CreateNeg(loadedValue, "neg");
-    builder.CreateStore(result, operandPtr);
-    return;
+    result = builder.CreateNeg(value, "neg");
   } else {
-    std::cerr << "Error: Unknown unary operation type: " << opType << "\n";
+    std::cerr << "Error: Unknown unary operation: " << opType << "\n";
     return;
   }
+
+  builder.CreateStore(result, operandPtr);
 }

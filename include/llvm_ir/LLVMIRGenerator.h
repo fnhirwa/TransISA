@@ -163,13 +163,18 @@ class LLVMIRGen {
   void initializeFunctionStack(llvm::Function* function);
 
   // some memory related functions
-  llvm::Value* handleDestinationMemory(MemoryNode* destMem);
-  llvm::Value* handleSourceMemory(MemoryNode* srcMem);
+  llvm::Value* getOrLoadMemory(MemoryNode* memNode);
+  llvm::Value* getOrLoadRegister(const std::string& regName);
   llvm::Value* castInputTypes(ASTNode* inputNode, const std::string nodeType);
 
   // Error logging functions
   llvm::FunctionCallee getPrintFunction();
-  // namedVariables
+  // Other utility functions
+  void snapshotRegisterState(llvm::Function* func);
+  void restoreRegisterState(llvm::Function* func);
+  void snapshotStackState(llvm::Function* func);
+  void restoreStackState(llvm::Function* func);
+
   // getting the named variables
   llvm::Value* getNamedValue(const std::string& name) {
     if (namedValues.count(name))
