@@ -89,6 +89,7 @@ void SyscallBuilder::emitExitSyscall(
 
 // Loading or getting the register
 llvm::Value* LLVMIRGen::getOrLoadRegister(const std::string& regName) {
+  llvm::Function* currentFunc = builder.GetInsertBlock()->getParent();
   llvm::Value* regPtr = getNamedValue(regName);
   if (!regPtr) {
     std::cerr << "Error: Source register " << regName << " not found "
@@ -160,10 +161,13 @@ llvm::Value* LLVMIRGen::castInputTypes(
         llvm::ConstantInt::get(context, llvm::APInt(32, intLit->value, true));
   } else if (nodeType == "reg") {
     auto* srcReg = dynamic_cast<RegisterNode*>(inputNode);
-    nodeValue = getOrLoadRegister(srcReg->registerName);
+    std::string regName = srcReg->registerName;
+    if (RegisterAlias.count(regName))
+      regName = RegisterAlias[regName];
+    nodeValue = getOrLoadRegister(regName);
 
     if (!nodeValue) {
-      std::cerr << "Error: Register " << srcReg->registerName << " not found\n";
+      std::cerr << "Error: Register " << regName << " not found\n";
       return nullptr;
     }
   } else if (nodeType == "mem") {
@@ -354,22 +358,6 @@ void LLVMIRGen::visitGlobalVariableNode(GlobalVariableNode* node) {
 }
 
 void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
-  // set the named values for this context used by stack
-  std::unordered_map<std::string, llvm::Value*> copiedNamedValues;
-
-  for (auto& arg : namedValues) {
-    std::string reg = arg.first;
-    if (reg == "eax" || reg == "ebx" || reg == "ecx" || reg == "edx" ||
-        reg == "esi" || reg == "edi") {
-      if (!arg.second)
-        continue;
-      copiedNamedValues[reg] = arg.second;
-    }
-  }
-
-  namedValues.clear();
-  namedValues = copiedNamedValues;
-
   llvm::Function* function = nullptr;
   // Check if the function is already declared
   if (definedFunctionsMap.find(node->name) != definedFunctionsMap.end()) {
@@ -381,6 +369,14 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
     function = llvm::Function::Create(
         funcType, llvm::Function::ExternalLinkage, node->name, &module);
     definedFunctionsMap[node->name] = function;
+  }
+
+  // set the named values for this context used by stack
+  namedValues.clear();
+  // debugging print namedValues keys
+  std::cerr << "Named values in function '" << node->name << "':\n";
+  for (const auto& [key, value] : namedValues) {
+    std::cerr << "  " << key << "\n";
   }
 
   llvm::BasicBlock* entryBB = nullptr;
@@ -1161,11 +1157,32 @@ void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {
 
   // Snapshot caller-saved registers and stack
   snapshotRegisterState(parentFunction);
-  snapshotRegisterState(parentFunction);
+  snapshotStackState(parentFunction);
 
   // Emit function call
   llvm::CallInst* call = builder.CreateCall(calleeFunction, args);
   call->setTailCall(false);
+
+  if (calleeFunction && calleeFunction->empty()) {
+    std::unordered_map<std::string, llvm::Value*> snapshot;
+    for (const auto& reg : {"eax", "ebx", "ecx", "edx", "esi", "edi"}) {
+      std::string shadowName = std::string(reg) + "_shadow";
+      if (namedValues.count(shadowName)) {
+        snapshot[reg] =
+            namedValues[shadowName]; // map "eax" → "eax_shadow" pointer
+      }
+    }
+
+    // Stack pointers (also treated as shadow values)
+    if (namedValues.count("rsp_shadow")) {
+      snapshot["rsp"] = namedValues["rsp_shadow"];
+    }
+    if (namedValues.count("rsp_ptr_shadow")) {
+      snapshot["rsp_ptr"] = namedValues["rsp_ptr_shadow"];
+    }
+
+    calleeContext[calleeFunction] = snapshot;
+  }
 
   // Restore caller-saved registers and stack
   restoreStackState(parentFunction);
@@ -1274,94 +1291,97 @@ void LLVMIRGen::initializeFunctionStack(llvm::Function* func) {
 
 void LLVMIRGen::handleStackOperationInstructionNode(InstructionNode* node) {
   llvm::Function* currentFunc = builder.GetInsertBlock()->getParent();
-  llvm::Type* int32Ty = llvm::Type::getInt32Ty(context);
 
-  bool isPush = node->opcode == "push";
-  bool isPop = node->opcode == "pop";
+  llvm::Value* rsp = getNamedValue("rsp_shadow");
+  llvm::Value* rspPtr = getNamedValue("rsp_ptr_shadow");
 
-  if (!isPush && !isPop) {
-    std::cerr << "[Error] Unsupported stack opcode: " << node->opcode << "\n";
+  if (!rsp || !rspPtr) {
+    std::cerr
+        << "Error: No stack snapshot (rsp_shadow) found in callee context\n";
     return;
   }
 
-  if (node->operands.empty()) {
-    std::cerr << "[Error] No operand found for '" << node->opcode << "'\n";
-    return;
-  }
-
-  RegisterNode* regNode = dynamic_cast<RegisterNode*>(node->operands[0].get());
-  if (!regNode) {
-    std::cerr << "[Error] Invalid register type for '" << node->opcode << "'\n";
-    return;
-  }
-
-  llvm::Type* operandType = nullptr;
-  llvm::Value* valueToPush = nullptr;
-  if (isPush) {
-    valueToPush = getNamedValue(regNode->registerName);
-    if (!valueToPush) {
-      std::cerr << "[Error] Register '" << regNode->registerName
-                << "' not found for 'push'\n";
-      return;
-    }
-    operandType = valueToPush->getType();
-  } else {
-    operandType = getLLVMTypeForRegister(regNode->registerName);
-    if (!operandType) {
-      std::cerr << "[Error] Failed to infer type for 'pop' register: "
-                << regNode->registerName << "\n";
-      return;
+  llvm::Function* callerFunc = nullptr;
+  for (const auto& [func, ctx] : calleeContext) {
+    if (func == currentFunc) {
+      callerFunc =
+          builder.GetInsertBlock()
+              ->getParent(); // still current, but used for map indexing
+      break;
     }
   }
-  llvm::AllocaInst* rsp = nullptr;
-  llvm::AllocaInst* stackMem = nullptr;
 
-  if (operandType->isIntegerTy(32)) {
-    rsp = rspIntPerFunction[currentFunc];
-    stackMem = stackMemIntPerFunction[currentFunc];
-  } else if (operandType->isPointerTy()) {
-    rsp = rspPtrPerFunction[currentFunc];
-    stackMem = stackMemPtrPerFunction[currentFunc];
+  if (!callerFunc || !stackMemIntPerFunction.count(callerFunc)) {
+    std::cerr << "Error: No stack memory snapshot found for callee\n";
+    return;
+  }
+
+  auto& stackInt = stackMemIntPerFunction[callerFunc];
+  auto& stackPtr = stackMemPtrPerFunction[callerFunc];
+
+  const std::string& opcode = node->opcode;
+
+  if (opcode == "push") {
+    ASTNode* valNode = node->operands[0].get();
+    std::string valType = check_operandType(valNode);
+    llvm::Value* val = nullptr;
+    if (valType != "reg" && valType != "mem" && valType != "int") {
+      std::cerr << "Error: Invalid value type for 'push': " << valType << "\n";
+      return;
+    }
+    // if (valType == "reg") {
+    //   auto* regNode = dynamic_cast<RegisterNode*>(valNode);
+    //   if (calleeContext.count(currentFunc) &&
+    //       calleeContext[currentFunc].count(regNode->registerName))
+    //     val = calleeContext[currentFunc][regNode->registerName];
+    // }
+    val = castInputTypes(valNode, valType);
+
+    llvm::Value* rspVal =
+        builder.CreateLoad(llvm::Type::getInt32Ty(context), rsp);
+    llvm::Value* newRsp = builder.CreateSub(
+        rspVal, llvm::ConstantInt::get(context, llvm::APInt(32, 1)));
+    builder.CreateStore(newRsp, rsp);
+
+    llvm::Value* ptr = builder.CreateInBoundsGEP(
+        llvm::ArrayType::get(llvm::Type::getInt32Ty(context), 1024),
+        stackInt,
+        {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0), newRsp},
+        "stack_push_ptr");
+
+    builder.CreateStore(val, ptr);
+
+  } else if (opcode == "pop") {
+    ASTNode* destNode = node->operands[0].get();
+    std::string destType = check_operandType(destNode);
+
+    llvm::Value* rspVal =
+        builder.CreateLoad(llvm::Type::getInt32Ty(context), rsp);
+
+    llvm::Value* ptr = builder.CreateInBoundsGEP(
+        llvm::ArrayType::get(llvm::Type::getInt32Ty(context), 1024),
+        stackInt,
+        {llvm::ConstantInt::get(llvm::Type::getInt32Ty(context), 0), rspVal},
+        "stack_pop_ptr");
+
+    llvm::Value* val = builder.CreateLoad(llvm::Type::getInt32Ty(context), ptr);
+
+    if (destType == "reg") {
+      auto* regNode = dynamic_cast<RegisterNode*>(destNode);
+      llvm::Value* regPtr = getOrLoadRegister(regNode->registerName);
+      builder.CreateStore(val, regPtr);
+    } else if (destType == "mem") {
+      auto* memNode = dynamic_cast<MemoryNode*>(destNode);
+      llvm::Value* destPtr = getOrLoadMemory(memNode);
+      builder.CreateStore(val, destPtr);
+    }
+
+    llvm::Value* newRsp = builder.CreateAdd(
+        rspVal, llvm::ConstantInt::get(context, llvm::APInt(32, 1)));
+    builder.CreateStore(newRsp, rsp);
+
   } else {
-    std::cerr << "[Error] Unsupported operand type for stack: ";
-    operandType->print(llvm::errs());
-    std::cerr << "\n";
-    return;
-  }
-
-  if (!rsp || !stackMem) {
-    std::cerr << "[Error] rsp or stackMem is nullptr for function: "
-              << currentFunc->getName().str() << "\n";
-    return;
-  }
-
-  llvm::Value* idx = builder.CreateLoad(
-      int32Ty, rsp, "load_rsp_" + currentFunc->getName().str());
-
-  if (isPush) {
-    llvm::Value* gep = builder.CreateInBoundsGEP(
-        stackMem->getAllocatedType(),
-        stackMem,
-        {llvm::ConstantInt::get(int32Ty, 0), idx},
-        "stack_idx_" + currentFunc->getName().str());
-    builder.CreateStore(valueToPush, gep);
-
-    llvm::Value* newRsp =
-        builder.CreateAdd(idx, llvm::ConstantInt::get(int32Ty, 1));
-    builder.CreateStore(newRsp, rsp);
-  } else { // pop
-    llvm::Value* newRsp =
-        builder.CreateSub(idx, llvm::ConstantInt::get(int32Ty, 1));
-    builder.CreateStore(newRsp, rsp);
-
-    llvm::Value* gep = builder.CreateInBoundsGEP(
-        stackMem->getAllocatedType(),
-        stackMem,
-        {llvm::ConstantInt::get(int32Ty, 0), newRsp},
-        "stack_idx_" + currentFunc->getName().str());
-
-    llvm::Value* popVal = builder.CreateLoad(operandType, gep);
-    namedValues[regNode->registerName] = popVal;
+    std::cerr << "Unsupported stack opcode: " << opcode << "\n";
   }
 }
 

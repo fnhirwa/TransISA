@@ -42,8 +42,21 @@ class LLVMIRGen {
   std::unordered_map<llvm::Function*, llvm::AllocaInst*> rspIntPerFunction;
   std::unordered_map<llvm::Function*, llvm::AllocaInst*> stackMemIntPerFunction;
   std::unordered_map<llvm::Function*, llvm::AllocaInst*> rspPtrPerFunction;
-  // std::unordered_map<llvm::Function*, std::vector<llvm::Value*>>
-  // virtualStackPerFunction; predefined functions for lookup
+  std::unordered_map<
+      llvm::Function*,
+      std::unordered_map<std::string, llvm::Value*>>
+      calleeContext;
+  std::unordered_map<std::string, std::string> RegisterAlias = {
+      {"al", "eax"},
+      {"ah", "eax"},
+      {"bl", "ebx"},
+      {"bh", "ebx"},
+      {"cl", "ecx"},
+      {"ch", "ecx"},
+      {"dl", "edx"},
+      {"dh", "edx"},
+  };
+
   std::unordered_map<std::string, llvm::Function*> definedFunctionsMap;
   std::unordered_map<std::string, std::string> entryBlockNames;
   std::unordered_map<
