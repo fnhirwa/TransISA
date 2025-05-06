@@ -1,6 +1,7 @@
 .section __TEXT,__text,regular,pure_instructions
-.globl _main
-_main:
+.global _start
+
+_start:
     mov     $0x2000004, %rax       # syscall: write
     mov     $1, %rdi               # fd: stdout
     lea     msg(%rip), %rsi        # buf: message address
