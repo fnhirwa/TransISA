@@ -908,8 +908,8 @@ void LLVMIRGen::handleIntInstructionNode(InstructionNode* node) {
     if (!namedValues.count("eax_ptr")) {
       // Create alloca for EAX if it doesn't exist
       llvm::IRBuilder<> entryBuilder(
-          &currentFunction->getEntryBlock(),
-          currentFunction->getEntryBlock().begin());
+          &currentfunction->getEntryBlock(),
+          currentfunction->getEntryBlock().begin());
       llvm::Value* eaxAlloca = entryBuilder.CreateAlloca(
           llvm::Type::getInt64Ty(context), nullptr, "eax_ptr");
       namedValues["eax_ptr"] = eaxAlloca;
