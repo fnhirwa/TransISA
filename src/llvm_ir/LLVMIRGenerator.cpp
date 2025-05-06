@@ -444,11 +444,6 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
 
   // set the named values for this context used by stack
   namedValues.clear();
-  // debugging print namedValues keys
-  std::cerr << "Named values in function '" << node->name << "':\n";
-  for (const auto& [key, value] : namedValues) {
-    std::cerr << "  " << key << "\n";
-  }
 
   llvm::BasicBlock* entryBB = nullptr;
   bool isFirstBlock = true;
@@ -1430,9 +1425,7 @@ void LLVMIRGen::handleStackOperationInstructionNode(InstructionNode* node) {
   llvm::Function* callerFunc = nullptr;
   for (const auto& [func, ctx] : calleeContext) {
     if (func == currentFunc) {
-      callerFunc =
-          builder.GetInsertBlock()
-              ->getParent(); // still current, but used for map indexing
+      callerFunc = builder.GetInsertBlock()->getParent();
       break;
     }
   }
@@ -1455,12 +1448,6 @@ void LLVMIRGen::handleStackOperationInstructionNode(InstructionNode* node) {
       std::cerr << "Error: Invalid value type for 'push': " << valType << "\n";
       return;
     }
-    // if (valType == "reg") {
-    //   auto* regNode = dynamic_cast<RegisterNode*>(valNode);
-    //   if (calleeContext.count(currentFunc) &&
-    //       calleeContext[currentFunc].count(regNode->registerName))
-    //     val = calleeContext[currentFunc][regNode->registerName];
-    // }
     val = castInputTypes(valNode, valType);
 
     llvm::Value* rspVal =
