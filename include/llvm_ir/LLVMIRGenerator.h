@@ -211,14 +211,20 @@ enum class TargetABI {
 };
 class SyscallBuilder {
  public:
-  static void emitSyscall(
+  static llvm::Value* emitSyscall(
       llvm::IRBuilder<>& builder,
       llvm::LLVMContext& context,
       llvm::Module* module,
       const std::vector<llvm::Value*>& args,
       uint64_t syscallNumber,
       TargetABI targetABI);
-
+  static llvm::Value* emitGenericSyscall(
+      llvm::IRBuilder<>& builder,
+      llvm::LLVMContext& context,
+      llvm::Module* module,
+      llvm::Value* syscallNumber,
+      llvm::Value* args[],
+      TargetABI targetABI);
   static void emitExitSyscall(
       llvm::IRBuilder<>& builder,
       llvm::LLVMContext& context,

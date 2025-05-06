@@ -39,38 +39,58 @@ std::string generateConstraints(size_t argCount) {
   return constraints;
 }
 
-// syscall builer class
-void SyscallBuilder::emitSyscall(
+// syscall builder class
+llvm::Value* SyscallBuilder::emitSyscall(
     llvm::IRBuilder<>& builder,
     llvm::LLVMContext& context,
     llvm::Module* module,
-    const std::vector<llvm::Value*>& args,
-    uint64_t syscallNumber,
+    const std::vector<llvm::Value*>&
+        args, // args = {syscall_number, arg0, ..., arg5}
+    uint64_t /*unused*/,
     TargetABI targetABI) {
-  assert(args.size() <= 6 && "Too many syscall arguments");
+  assert(args.size() <= 7 && "Too many arguments including syscall number");
 
-  llvm::FunctionType* funcType = llvm::FunctionType::get(
-      llvm::Type::getVoidTy(context),
-      std::vector<llvm::Type*>(args.size(), llvm::Type::getInt64Ty(context)),
-      false);
+  std::vector<llvm::Type*> argTypes(
+      args.size(), llvm::Type::getInt64Ty(context));
+  llvm::FunctionType* funcType =
+      llvm::FunctionType::get(llvm::Type::getInt64Ty(context), argTypes, false);
 
   std::string asmString;
   std::string constraints;
 
   if (targetABI == TargetABI::MacOS_ARM64) {
-    asmString = generateMacOSInlineAsm(args.size(), syscallNumber);
-    constraints = generateConstraints(args.size());
+    // x16 = syscall number, x0-x5 = args
+    // InlineAsm assigns: $0 = x16, $1 = x0, ..., $6 = x5
+    asmString = "mov x16, $0\n"; // syscall number
+    for (size_t i = 1; i < args.size(); ++i)
+      asmString +=
+          "mov x" + std::to_string(i - 1) + ", $" + std::to_string(i) + "\n";
+    asmString += "svc #0x80\n";
+    asmString += "mov $0, x0"; // return x0
+
+    constraints = "=r"; // return
+    for (size_t i = 0; i < args.size(); ++i)
+      constraints += ",r";
   } else if (targetABI == TargetABI::Linux_ARM64) {
-    asmString = generateLinuxARM64InlineAsm(args.size(), syscallNumber);
-    constraints = generateConstraints(args.size());
+    // x8 = syscall number, x0-x5 = args
+    asmString = "mov x8, $0\n";
+    for (size_t i = 1; i < args.size(); ++i)
+      asmString +=
+          "mov x" + std::to_string(i - 1) + ", $" + std::to_string(i) + "\n";
+    asmString += "svc #0\n";
+    asmString += "mov $0, x0";
+
+    constraints = "=r";
+    for (size_t i = 0; i < args.size(); ++i)
+      constraints += ",r";
   } else {
-    // Add more ABIs or error
-    return;
+    llvm::errs() << "Unsupported ABI for syscall\n";
+    return nullptr;
   }
 
   llvm::InlineAsm* inlineAsm =
       llvm::InlineAsm::get(funcType, asmString, constraints, true);
-  builder.CreateCall(inlineAsm, args);
+  return builder.CreateCall(inlineAsm, args, "syscall_result");
 }
 
 void SyscallBuilder::emitExitSyscall(
@@ -79,8 +99,59 @@ void SyscallBuilder::emitExitSyscall(
     llvm::Module* module,
     llvm::Value* status,
     TargetABI targetABI) {
-  emitSyscall(
-      builder, context, module, {status}, 1, targetABI); // syscall 1 = exit
+  uint64_t exitNumber = (targetABI == TargetABI::MacOS_ARM64) ? 0x2000001 : 93;
+  llvm::Value* syscallNumVal =
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), exitNumber);
+
+  llvm::Value* result = emitSyscall(
+      builder, context, module, {syscallNumVal, status}, 0, targetABI);
+  (void)result;
+}
+
+llvm::Value* SyscallBuilder::emitGenericSyscall(
+    llvm::IRBuilder<>& builder,
+    llvm::LLVMContext& context,
+    llvm::Module* module,
+    llvm::Value* syscallNumber,
+    llvm::Value* args[],
+    TargetABI targetABI) {
+  if (targetABI == TargetABI::MacOS_ARM64) {
+    llvm::Function* convertFunc =
+        module->getFunction("convert_x86_to_macos_syscall");
+    if (!convertFunc) {
+      llvm::FunctionType* funcType = llvm::FunctionType::get(
+          llvm::Type::getInt64Ty(context),
+          {llvm::Type::getInt64Ty(context)},
+          false);
+
+      convertFunc = llvm::Function::Create(
+          funcType,
+          llvm::Function::ExternalLinkage,
+          "convert_x86_to_macos_syscall",
+          module);
+
+      llvm::BasicBlock* entry =
+          llvm::BasicBlock::Create(context, "entry", convertFunc);
+      llvm::IRBuilder<> convBuilder(entry);
+
+      llvm::Argument* arg = &*convertFunc->arg_begin(); // syscall_number
+      llvm::Value* offset =
+          llvm::ConstantInt::get(context, llvm::APInt(64, 0x2000000));
+      llvm::Value* result = convBuilder.CreateAdd(arg, offset);
+      convBuilder.CreateRet(result);
+    }
+
+    syscallNumber = builder.CreateCall(convertFunc, {syscallNumber});
+  }
+
+  std::vector<llvm::Value*> fullArgs = {syscallNumber};
+  for (int i = 0; i < 6; ++i) {
+    fullArgs.push_back(
+        args[i] ? args[i]
+                : llvm::ConstantInt::get(context, llvm::APInt(64, 0)));
+  }
+
+  return emitSyscall(builder, context, module, fullArgs, 0, targetABI);
 }
 
 /*=============================================================*/
@@ -781,129 +852,184 @@ void LLVMIRGen::handleIntInstructionNode(InstructionNode* node) {
   int interruptNumber = intLit->value;
 
   if (interruptNumber == 0x80) {
-#ifdef __x86_64__
-    // Handle x86-64 Linux system call via `int 0x80`
-    llvm::Function* syscallFunc = module.getFunction("syscall");
-    if (!syscallFunc) {
-      llvm::FunctionType* syscallType = llvm::FunctionType::get(
-          llvm::Type::getInt64Ty(context), // return type
-          {llvm::Type::getInt64Ty(context), // syscall number
-           llvm::Type::getInt64Ty(context),
-           llvm::Type::getInt64Ty(context),
-           llvm::Type::getInt64Ty(context),
-           llvm::Type::getInt64Ty(context),
-           llvm::Type::getInt64Ty(context),
-           llvm::Type::getInt64Ty(context)}, // arguments
-          false);
-
-      syscallFunc = llvm::Function::Create(
-          syscallType, llvm::Function::ExternalLinkage, "syscall", module);
-    }
-
     // Get syscall number from EAX
     llvm::Value* syscallNumber = getNamedValue("eax");
     if (!syscallNumber) {
       std::cerr << "Error: EAX not set before 'int 0x80'\n";
       return;
     }
+    llvm::Function* currentfunction = builder.GetInsertBlock()->getParent();
+#ifdef __x86_64__
+    // Handle x86-64 Linux system call via `int 0x80`
+    llvm::Function* syscallFunc = module.getFunction("syscall");
+    if (!syscallFunc) {
+      llvm::FunctionType* syscallType = llvm::FunctionType::get(
+          llvm::Type::getInt64Ty(context), // return type
+          {
+              llvm::Type::getInt64Ty(context), // syscall number
+              llvm::Type::getInt64Ty(context), // arg1
+              llvm::Type::getInt64Ty(context), // arg2
+              llvm::Type::getInt64Ty(context), // arg3
+              llvm::Type::getInt64Ty(context), // arg4
+              llvm::Type::getInt64Ty(context), // arg5
+              llvm::Type::getInt64Ty(context) // arg6
+          },
+          false);
 
-    // Get syscall arguments from registers (EBX, ECX, etc.)
-    llvm::Value* arg1 = namedValues.count("ebx")
-        ? namedValues["ebx"]
-        : llvm::ConstantInt::get(context, llvm::APInt(64, 0));
-    llvm::Value* arg2 = namedValues.count("ecx")
-        ? namedValues["ecx"]
-        : llvm::ConstantInt::get(context, llvm::APInt(64, 0));
-    llvm::Value* arg3 = namedValues.count("edx")
-        ? namedValues["edx"]
-        : llvm::ConstantInt::get(context, llvm::APInt(64, 0));
-    llvm::Value* arg4 = namedValues.count("esi")
-        ? namedValues["esi"]
-        : llvm::ConstantInt::get(context, llvm::APInt(64, 0));
-    llvm::Value* arg5 = namedValues.count("edi")
-        ? namedValues["edi"]
-        : llvm::ConstantInt::get(context, llvm::APInt(64, 0));
-    llvm::Value* arg6 = namedValues.count("ebp")
-        ? namedValues["ebp"]
-        : llvm::ConstantInt::get(context, llvm::APInt(64, 0));
+      syscallFunc = llvm::Function::Create(
+          syscallType, llvm::Function::ExternalLinkage, "syscall", module);
+    }
+
+    // Helper function to get register value or zero
+    auto getRegValue = [&](const std::string& reg) -> llvm::Value* {
+      if (namedValues.count(reg)) {
+        llvm::Value* regVal = namedValues[reg];
+        // If it's a pointer to the register, load it
+        if (regVal->getType()->isPointerTy()) {
+          return builder.CreateLoad(llvm::Type::getInt64Ty(context), regVal);
+        }
+        return regVal;
+      }
+      return llvm::ConstantInt::get(context, llvm::APInt(64, 0));
+    };
+
+    // Get all arguments
+    llvm::Value* args[6] = {
+        getRegValue("ebx"),
+        getRegValue("ecx"),
+        getRegValue("edx"),
+        getRegValue("esi"),
+        getRegValue("edi"),
+        getRegValue("ebp")};
 
     // Call syscall function
     llvm::Value* result = builder.CreateCall(
         syscallFunc,
-        {syscallNumber, arg1, arg2, arg3, arg4, arg5, arg6},
+        {syscallNumber, args[0], args[1], args[2], args[3], args[4], args[5]},
         "syscall_result");
 
     // Store result in EAX (as per x86 convention)
+    // First ensure we have a pointer to EAX
+    if (!namedValues.count("eax_ptr")) {
+      // Create alloca for EAX if it doesn't exist
+      llvm::IRBuilder<> entryBuilder(
+          &currentFunction->getEntryBlock(),
+          currentFunction->getEntryBlock().begin());
+      llvm::Value* eaxAlloca = entryBuilder.CreateAlloca(
+          llvm::Type::getInt64Ty(context), nullptr, "eax_ptr");
+      namedValues["eax_ptr"] = eaxAlloca;
+    }
+
+    // Store the result
+    builder.CreateStore(result, namedValues["eax_ptr"]);
     namedValues["eax"] = result;
 
 #elif (defined(__linux__) || defined(__APPLE__)) && defined(__aarch64__)
-    // Helper function to load and convert values to i64
-    auto loadAndConvertToInt64 = [&](const std::string& regName,
-                                     llvm::Type* regType) -> llvm::Value* {
-      if (namedValues.count(regName)) {
-        llvm::Value* regValue = getNamedValue(regName);
-        if (regValue->getType()->isPointerTy()) {
-          llvm::Value* loaded = builder.CreateLoad(regType, regValue);
-          return builder.CreateZExtOrTrunc(
-              loaded, llvm::Type::getInt64Ty(context));
-        } else if (regValue->getType()->isIntegerTy()) {
-          return builder.CreateZExtOrTrunc(
-              regValue, llvm::Type::getInt64Ty(context));
-        } else {
-          throw std::runtime_error("Unsupported type for: " + regName);
+    // ARM64 implementation
+    auto getRegValue = [&](const std::string& reg) -> llvm::Value* {
+      if (namedValues.count(reg)) {
+        llvm::Value* regVal = namedValues[reg];
+        if (regVal->getType()->isPointerTy()) {
+          return builder.CreateLoad(llvm::Type::getInt64Ty(context), regVal);
         }
-      } else {
-        return llvm::ConstantInt::get(context, llvm::APInt(64, 0));
+        return builder.CreateZExtOrTrunc(
+            regVal, llvm::Type::getInt64Ty(context));
       }
+      return llvm::ConstantInt::get(context, llvm::APInt(64, 0));
     };
-    // Common syscall args for write(fd, buf, len)
-    llvm::Value* arg0 =
-        loadAndConvertToInt64("ebx", llvm::Type::getInt32Ty(context));
-    llvm::Value* arg2 =
-        loadAndConvertToInt64("edx", llvm::Type::getInt32Ty(context));
-    llvm::Value* arg1 = nullptr;
 
-    if (namedValues.count("ecx")) {
-      llvm::Value* loadedPtr = builder.CreateLoad(
-          llvm::PointerType::get(context, 0), namedValues["ecx"]);
-      arg1 = builder.CreatePtrToInt(loadedPtr, llvm::Type::getInt64Ty(context));
-    } else {
-      arg1 = llvm::ConstantInt::get(context, llvm::APInt(64, 0));
-    }
+    // Get syscall number and check if it's constant
+    llvm::Value* syscallNum = getRegValue("eax");
+    bool isExitSyscall = false;
 
-    std::vector<llvm::Value*> writeArgs = {arg0, arg1, arg2};
+    if (auto* constInt = llvm::dyn_cast<llvm::ConstantInt>(syscallNum)) {
+      uint64_t syscallNumVal = constInt->getZExtValue();
 
-    llvm::Value* exitStatus =
-        loadAndConvertToInt64("ebx", llvm::Type::getInt32Ty(context));
+      // Handle specific syscalls
+      if (syscallNumVal == 1) { // exit
+        llvm::Value* exitStatus = getRegValue("ebx");
+#if defined(__linux__) && defined(__aarch64__)
+        constexpr int SYSCALL_EXIT = 93;
+        SyscallBuilder::emitExitSyscall(
+            builder, context, &module, exitStatus, TargetABI::Linux_ARM64);
+#elif defined(__APPLE__) && defined(__aarch64__)
+        constexpr int SYSCALL_EXIT = 0x2000001;
+        SyscallBuilder::emitExitSyscall(
+            builder, context, &module, exitStatus, TargetABI::MacOS_ARM64);
+#endif
+        isExitSyscall = true;
+      } else if (syscallNumVal == 4) { // write
+        llvm::Value* fd = getRegValue("ebx");
+        llvm::Value* buf = getRegValue("ecx");
+        llvm::Value* len = getRegValue("edx");
+
+        std::vector<llvm::Value*> writeArgs = {fd, buf, len};
 
 #if defined(__linux__) && defined(__aarch64__)
-    constexpr int SYSCALL_WRITE = 64;
-    constexpr int SYSCALL_EXIT = 93;
-
-    SyscallBuilder::emitSyscall(
-        builder,
-        context,
-        &module,
-        writeArgs,
-        SYSCALL_WRITE,
-        TargetABI::Linux_ARM64);
-    SyscallBuilder::emitExitSyscall(
-        builder, context, &module, exitStatus, TargetABI::Linux_ARM64);
-
+        constexpr int SYSCALL_WRITE = 64;
+        llvm::Value* result = SyscallBuilder::emitSyscall(
+            builder,
+            context,
+            &module,
+            writeArgs,
+            SYSCALL_WRITE,
+            TargetABI::Linux_ARM64);
 #elif defined(__APPLE__) && defined(__aarch64__)
-    constexpr int SYSCALL_WRITE = 0x2000004;
-    constexpr int SYSCALL_EXIT = 0x2000001;
-
-    SyscallBuilder::emitSyscall(
-        builder,
-        context,
-        &module,
-        writeArgs,
-        SYSCALL_WRITE,
-        TargetABI::MacOS_ARM64);
-    SyscallBuilder::emitExitSyscall(
-        builder, context, &module, exitStatus, TargetABI::MacOS_ARM64);
+        constexpr int SYSCALL_WRITE = 0x2000004;
+        llvm::Value* result = SyscallBuilder::emitSyscall(
+            builder,
+            context,
+            &module,
+            writeArgs,
+            SYSCALL_WRITE,
+            TargetABI::MacOS_ARM64);
 #endif
+        // Store result in EAX
+        if (!namedValues.count("eax_ptr")) {
+          llvm::IRBuilder<> entryBuilder(
+              &currentfunction->getEntryBlock(),
+              currentfunction->getEntryBlock().begin());
+          llvm::Value* eaxAlloca = entryBuilder.CreateAlloca(
+              llvm::Type::getInt64Ty(context), nullptr, "eax_ptr");
+          namedValues["eax_ptr"] = eaxAlloca;
+        }
+        builder.CreateStore(result, namedValues["eax_ptr"]);
+        namedValues["eax"] = result;
+      }
+    }
+
+    if (!isExitSyscall) {
+      // Generic syscall handling for non-exit cases
+      llvm::Value* args[6] = {
+          getRegValue("ebx"),
+          getRegValue("ecx"),
+          getRegValue("edx"),
+          getRegValue("esi"),
+          getRegValue("edi"),
+          getRegValue("ebp")};
+
+#if defined(__linux__) && defined(__aarch64__)
+      llvm::Value* result = SyscallBuilder::emitGenericSyscall(
+          builder, context, &module, syscallNum, args, TargetABI::Linux_ARM64);
+#elif defined(__APPLE__) && defined(__aarch64__)
+      llvm::Value* result = SyscallBuilder::emitGenericSyscall(
+          builder, context, &module, syscallNum, args, TargetABI::MacOS_ARM64);
+#endif
+
+      // Store result in EAX
+      if (result) {
+        if (!namedValues.count("eax_ptr")) {
+          llvm::IRBuilder<> entryBuilder(
+              &currentfunction->getEntryBlock(),
+              currentfunction->getEntryBlock().begin());
+          llvm::Value* eaxAlloca = entryBuilder.CreateAlloca(
+              llvm::Type::getInt64Ty(context), nullptr, "eax_ptr");
+          namedValues["eax_ptr"] = eaxAlloca;
+        }
+        builder.CreateStore(result, namedValues["eax_ptr"]);
+        namedValues["eax"] = result;
+      }
+    }
 
 #else
     std::cerr << "Error: Unsupported architecture\n";
