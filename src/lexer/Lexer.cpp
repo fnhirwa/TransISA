@@ -24,6 +24,7 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert("syscall", TokenType::INSTRUCTION);
   keywordTrie->insert("int", TokenType::INSTRUCTION);
   keywordTrie->insert("cmp", TokenType::INSTRUCTION);
+  keywordTrie->insert("test", TokenType::INSTRUCTION);
   // FPU
   keywordTrie->insert("fadd", TokenType::INSTRUCTION); // Floating add
   keywordTrie->insert("fsub", TokenType::INSTRUCTION); // Floating subtract
@@ -80,6 +81,8 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert("popad", TokenType::INSTRUCTION); // Pop all (32-bit)
   keywordTrie->insert("pushf", TokenType::INSTRUCTION); // Push flags register
   keywordTrie->insert("popf", TokenType::INSTRUCTION); // Pop flags register
+  keywordTrie->insert("dec", TokenType::INSTRUCTION); // Decrement
+  keywordTrie->insert("inc", TokenType::INSTRUCTION); // Increment
 
   // Jump instructions
   keywordTrie->insert("jmp", TokenType::INSTRUCTION); // Unconditional jump

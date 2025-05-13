@@ -36,3 +36,4 @@ build/
 .vscode/
 codes_86/
 _deps/
+*.dSYM/

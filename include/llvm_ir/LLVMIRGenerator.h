@@ -30,9 +30,33 @@ class LLVMIRGen {
   llvm::LLVMContext context;
   llvm::Module module;
   llvm::IRBuilder<> builder;
+  // tracking named values
+  // for example, eax, ebx, ecx, edx for the context of the current function
+  // and the current basic block
   std::unordered_map<std::string, llvm::Value*> namedValues;
   std::unordered_map<std::string, llvm::BasicBlock*> labelMap;
-  // predefined functions for lookup
+  std::unordered_map<std::string, llvm::Value*> globalNamedValues;
+
+  // stack memory tracking
+  std::unordered_map<llvm::Function*, llvm::AllocaInst*> stackMemPtrPerFunction;
+  std::unordered_map<llvm::Function*, llvm::AllocaInst*> rspIntPerFunction;
+  std::unordered_map<llvm::Function*, llvm::AllocaInst*> stackMemIntPerFunction;
+  std::unordered_map<llvm::Function*, llvm::AllocaInst*> rspPtrPerFunction;
+  std::unordered_map<
+      llvm::Function*,
+      std::unordered_map<std::string, llvm::Value*>>
+      calleeContext;
+  std::unordered_map<std::string, std::string> RegisterAlias = {
+      {"al", "eax"},
+      {"ah", "eax"},
+      {"bl", "ebx"},
+      {"bh", "ebx"},
+      {"cl", "ecx"},
+      {"ch", "ecx"},
+      {"dl", "edx"},
+      {"dh", "edx"},
+  };
+
   std::unordered_map<std::string, llvm::Function*> definedFunctionsMap;
   std::unordered_map<std::string, std::string> entryBlockNames;
   std::unordered_map<
@@ -51,10 +75,6 @@ class LLVMIRGen {
           {"mul",
            [](llvm::IRBuilder<>& builder, llvm::Value* lhs, llvm::Value* rhs) {
              return builder.CreateMul(lhs, rhs, "multmp");
-           }},
-          {"div",
-           [](llvm::IRBuilder<>& builder, llvm::Value* lhs, llvm::Value* rhs) {
-             return builder.CreateSDiv(lhs, rhs, "divtmp"); // Signed division
            }},
           {"and",
            [](llvm::IRBuilder<>& builder, llvm::Value* lhs, llvm::Value* rhs) {
@@ -131,25 +151,57 @@ class LLVMIRGen {
   }
   void visitGlobalVariableNode(GlobalVariableNode* node);
   void visitFunctionNode(FunctionNode* node);
-  void visitBasicBlockNode(BasicBlockNode* node);
+  void visitBasicBlockNode(
+      BasicBlockNode* node,
+      const std::vector<llvm::BasicBlock*>& orderedBlocks);
   void visitInstructionNode(InstructionNode* node);
+  void visitBssNode(BssNode* node);
 
   // different instruction set
   void handleBinaryOpNode(InstructionNode* node);
+  void handleUnaryInstructionNode(
+      InstructionNode* node,
+      const std::string& opType);
   void handleMovInstructionNode(InstructionNode* node);
   void handleLeaInstructionNode(InstructionNode* node);
   void handleSyscallInstructionNode(InstructionNode* node);
   void handleIntInstructionNode(InstructionNode* node);
   void handleRetInstructionNode(InstructionNode* node);
-  void handlCompareInstructionNode(InstructionNode* node);
+  void handleCompareInstructionNode(InstructionNode* node);
   void handleBranchingInstructions(InstructionNode* node);
   void handleLoopInstructionNode(InstructionNode* node);
   void handleCallInstructionNode(InstructionNode* node);
+  void handleDivInstructionNode(InstructionNode* node);
+  void handleStackOperationInstructionNode(InstructionNode* node);
+  void initializeFunctionStack(llvm::Function* function);
 
   // some memory related functions
-  llvm::Value* handleDestinationMemory(MemoryNode* destMem);
-  llvm::Value* handleSourceMemory(MemoryNode* srcMem);
+  llvm::Value* getOrLoadMemory(MemoryNode* memNode);
+  llvm::Value* getOrLoadRegister(const std::string& regName);
   llvm::Value* castInputTypes(ASTNode* inputNode, const std::string nodeType);
+
+  // Error logging functions
+  llvm::FunctionCallee getPrintFunction();
+  // Other utility functions
+  void snapshotRegisterState(llvm::Function* func);
+  void restoreRegisterState(llvm::Function* func);
+  void snapshotStackState(llvm::Function* func);
+  void restoreStackState(llvm::Function* func);
+
+  // getting the named variables
+  llvm::Value* getNamedValue(const std::string& name) {
+    if (namedValues.count(name))
+      return namedValues[name];
+    if (globalNamedValues.count(name))
+      return globalNamedValues[name];
+    return nullptr; // Error
+  }
+  llvm::Type* getLLVMTypeForRegister(const std::string& regName) {
+    auto it = namedValues.find(regName);
+    if (it != namedValues.end())
+      return it->second->getType();
+    return llvm::Type::getInt32Ty(context); // default fallback
+  }
 };
 
 enum class TargetABI {
@@ -159,14 +211,20 @@ enum class TargetABI {
 };
 class SyscallBuilder {
  public:
-  static void emitSyscall(
+  static llvm::Value* emitSyscall(
       llvm::IRBuilder<>& builder,
       llvm::LLVMContext& context,
       llvm::Module* module,
       const std::vector<llvm::Value*>& args,
       uint64_t syscallNumber,
       TargetABI targetABI);
-
+  static llvm::Value* emitGenericSyscall(
+      llvm::IRBuilder<>& builder,
+      llvm::LLVMContext& context,
+      llvm::Module* module,
+      llvm::Value* syscallNumber,
+      llvm::Value* args[],
+      TargetABI targetABI);
   static void emitExitSyscall(
       llvm::IRBuilder<>& builder,
       llvm::LLVMContext& context,

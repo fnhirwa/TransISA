@@ -1,6 +1,7 @@
 #ifndef AST_H
 #define AST_H
 
+#include <cassert>
 #include <iostream>
 #include <memory>
 #include <string>
@@ -29,6 +30,7 @@ class ASTNode {
   std::vector<std::unique_ptr<ASTNode>> children;
 
   void addBasicBlock(std::unique_ptr<ASTNode> block) {
+    assert(block.get() != this && "Cannot add node to itself.");
     children.push_back(std::move(block));
   }
 
@@ -72,6 +74,7 @@ class FunctionNode : public ASTNode {
   FunctionNode(const std::string name) : name(std::move(name)) {}
 
   void addBasicBlock(std::unique_ptr<ASTNode> block) {
+    assert(block.get() != this && "FunctionNode cannot add itself as a block.");
     basicBlocks.push_back(std::move(block));
   }
   void print(int indent = 0) const override {
@@ -90,6 +93,9 @@ class BasicBlockNode : public ASTNode {
   std::vector<std::unique_ptr<ASTNode>> instructions;
   explicit BasicBlockNode(const std::string& label) : label(label) {}
   void addBasicBlock(std::unique_ptr<ASTNode> instr) {
+    assert(
+        instr.get() != this &&
+        "BasicBlockNode cannot add itself as an instruction.");
     instructions.push_back(std::move(instr));
   }
 
@@ -228,6 +234,29 @@ class BssNode : public ASTNode {
     printIndent(indent);
     std::cout << "BSS: " << varName << " " << directiveName << " " << size
               << "\n";
+  }
+};
+
+// Punctuation Node
+class PunctuationNode : public ASTNode {
+ public:
+  std::string punctuation;
+  explicit PunctuationNode(const std::string& punctuation)
+      : punctuation(punctuation) {}
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "Punctuation: " << punctuation << "\n";
+  }
+};
+
+// Operand Size Node
+class OperandSizeNode : public ASTNode {
+ public:
+  std::string size;
+  explicit OperandSizeNode(const std::string& size) : size(size) {}
+  void print(int indent = 0) const override {
+    printIndent(indent);
+    std::cout << "Operand Size: " << size << "\n";
   }
 };
 
