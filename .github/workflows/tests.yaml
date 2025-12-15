@@ -2,69 +2,45 @@ name: Run Exhaustive Tests
 
 on:
   push:
-    branches:
-      - main
+    branches: [ main ]
   pull_request:
-    branches:
-      - main
+    branches: [ main ]
 
 jobs:
   run-tests:
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest]
         include:
           - os: ubuntu-latest
-            target: x86_64
+            name: ubuntu
           - os: macos-latest
-            target: arm64
-    runs-on: ${{ matrix.os }}
+            name: macos
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Debug - List repository contents
-        run: |
-          echo "=== Repository root ==="
-          ls -la
-          echo ""
-          echo "=== src/ directory ==="
-          ls -la src/
-          echo ""
-          echo "=== src subdirectories ==="
-          ls -la src/Frontend/ || echo "Frontend directory not found"
-          ls -la src/Codegen/ || echo "Codegen directory not found"
-          ls -la src/Optimizer/ || echo "Optimizer directory not found"
-          ls -la src/Utils/ || echo "Utils directory not found"
-          echo ""
-          echo "=== Looking for all CMakeLists.txt files ==="
-          find . -name "CMakeLists.txt" -type f
-          echo ""
-          echo "=== Checking for case sensitivity issues ==="
-          find src/ -type d
 
       - name: Install dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          
-          # Add LLVM apt repository
+          sudo apt-get install -y wget gnupg lsb-release
+
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
           sudo add-apt-repository "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main"
           sudo apt-get update
-          
-          # Install LLVM 19 and dependencies
-          sudo apt-get install -y cmake ninja-build \
+
+          sudo apt-get install -y \
+            cmake ninja-build \
             llvm-19 llvm-19-dev llvm-19-tools \
             clang-19 clang-tools-19 \
             lld-19 libc++-19-dev libc++abi-19-dev
-          
-          # Set environment variables
-          echo "LLVM_DIR=/usr/lib/llvm-19/lib/cmake/llvm" >> $GITHUB_ENV
+
           echo "CC=/usr/bin/clang-19" >> $GITHUB_ENV
           echo "CXX=/usr/bin/clang++-19" >> $GITHUB_ENV
-          echo "LD_LIBRARY_PATH=/usr/lib/llvm-19/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "LLVM_DIR=/usr/lib/llvm-19/lib/cmake/llvm" >> $GITHUB_ENV
           echo "PATH=/usr/lib/llvm-19/bin:$PATH" >> $GITHUB_ENV
 
       - name: Install dependencies (macOS)
@@ -72,83 +48,61 @@ jobs:
         run: |
           brew update
           brew install cmake ninja llvm@19
-          
-          # Store LLVM path
-          LLVM_PREFIX=$(brew --prefix llvm@19)
-          
-          # Set up compilers
+
+          LLVM_PREFIX="$(brew --prefix llvm@19)"
+          SDKROOT="$(xcrun --sdk macosx --show-sdk-path)"
+
+          echo "LLVM_PREFIX=${LLVM_PREFIX}" >> $GITHUB_ENV
+          echo "SDKROOT=${SDKROOT}" >> $GITHUB_ENV
+
           echo "CC=${LLVM_PREFIX}/bin/clang" >> $GITHUB_ENV
           echo "CXX=${LLVM_PREFIX}/bin/clang++" >> $GITHUB_ENV
           echo "LLVM_DIR=${LLVM_PREFIX}/lib/cmake/llvm" >> $GITHUB_ENV
-          
-          # Add LLVM binary path to PATH (for llvm-config etc)
           echo "PATH=${LLVM_PREFIX}/bin:$PATH" >> $GITHUB_ENV
-          
-          SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
-          echo "SDKROOT=${SDKROOT}" >> $GITHUB_ENV
 
-
-      - name: Verify LLVM Installation
+      - name: Verify toolchain
         run: |
-          echo "Using Clang version:"
-          ${CC} --version
-          echo "LLVM Directory: ${LLVM_DIR}"
+          echo "CC = $CC"
+          echo "CXX = $CXX"
+          $CC --version
 
-      - name: Configure CMake
+      - name: Configure CMake (Ubuntu)
+        if: runner.os == 'Linux'
         run: |
-          # Pass the linker flags specifically to the build via CMake args
-          # DO NOT use DYLD_LIBRARY_PATH here
+          rm -rf build
           cmake -B build -S . -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_C_COMPILER="${CC}" \
-            -DCMAKE_CXX_COMPILER="${CXX}" \
-            -DCMAKE_OSX_SYSROOT="${SDKROOT}" \
+            -DCMAKE_C_COMPILER="$CC" \
+            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DCMAKE_CXX_STANDARD=17 \
+            -DCMAKE_CXX_STANDARD_REQUIRED=ON
+
+      - name: Configure CMake (macOS)
+        if: runner.os == 'macOS'
+        run: |
+          rm -rf build
+          cmake -B build -S . -G Ninja \
+            -DCMAKE_BUILD_TYPE=Debug \
+            -DCMAKE_C_COMPILER="$CC" \
+            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DCMAKE_AR="$LLVM_PREFIX/bin/llvm-ar" \
+            -DCMAKE_RANLIB="$LLVM_PREFIX/bin/llvm-ranlib" \
+            -DCMAKE_OSX_SYSROOT="$SDKROOT" \
             -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
             -DCMAKE_CXX_STANDARD=17 \
             -DCMAKE_CXX_STANDARD_REQUIRED=ON
 
-        env:
-          LLVM_DIR: ${{ env.LLVM_DIR }}
-          CC: ${{ env.CC }}
-          CXX: ${{ env.CXX }}
-          CXXFLAGS: ${{ env.CXXFLAGS }}
-          LDFLAGS: ${{ env.LDFLAGS }}
-          PATH: ${{ env.PATH }}
-          DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH }}
-          LD_LIBRARY_PATH: ${{ env.LD_LIBRARY_PATH }}
-
-      - name: Build Project
+      - name: Verify archive tools (macOS)
+        if: runner.os == 'macOS'
         run: |
-          cmake --build build --config Debug --verbose
-        env:
-          PATH: ${{ env.PATH }}
-          DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH }}
-          LD_LIBRARY_PATH: ${{ env.LD_LIBRARY_PATH }}
+          cmake -LA -N build | grep CMAKE_AR
+          cmake -LA -N build | grep CMAKE_RANLIB
 
-      - name: Debug Build Artifacts (if build fails)
-        if: failure()
+      - name: Build
         run: |
-          echo "=== Checking for library files ==="
-          ls -la build/src/Frontend/ 2>/dev/null || echo "Frontend directory not found"
-          ls -la build/src/Codegen/ 2>/dev/null || echo "Codegen directory not found"
-          ls -la build/src/Optimizer/ 2>/dev/null || echo "Optimizer directory not found"
-          ls -la build/src/Utils/ 2>/dev/null || echo "Utils directory not found"
-          
-          echo "=== CMake configuration output ==="
-          cat build/CMakeCache.txt 2>/dev/null || echo "CMakeCache.txt not found"
+          cmake --build build --verbose
 
-      - name: Run Tests
+      - name: Run tests
         run: |
           cd build
           ctest --output-on-failure --verbose
-        env:
-          PATH: ${{ env.PATH }}
-          DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH }}
-          LD_LIBRARY_PATH: ${{ env.LD_LIBRARY_PATH }}
-
-      - name: Upload Test Results
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: test-results-${{ matrix.os }}
-          path: build/Testing/
