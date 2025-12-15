@@ -18,6 +18,6 @@
 #include "TransISA/Frontend/Lifter.h"
 
 int main() {
-  std::cout << "Hello from TransISA!" << std::endl;
+  std::cout << "TransISA!" << std::endl;
   return 0;
 }
