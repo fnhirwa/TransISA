@@ -12,7 +12,7 @@ jobs:
   run-tests:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest]  # Run on both Linux and macOS
+        os: [ubuntu-latest, macos-latest]
         include:
           - os: ubuntu-latest
             target: x86_64
@@ -30,7 +30,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake libgtest-dev ninja-build llvm-19 llvm-19-dev clang-19 lld-19 lldb-19
           
-          echo "LLVM_DIR=/usr/lib/llvm-19/cmake" >> $GITHUB_ENV
+          echo "LLVM_DIR=/usr/lib/llvm-19/lib/cmake/llvm" >> $GITHUB_ENV
           echo "CC=/usr/bin/clang-19" >> $GITHUB_ENV
           echo "CXX=/usr/bin/clang++-19" >> $GITHUB_ENV
           echo "CMAKE_AR=/usr/bin/llvm-ar-19" >> $GITHUB_ENV
@@ -63,17 +63,13 @@ jobs:
       - name: Verify LLVM Installation
         run: |
           echo "Using Clang version:"
-          clang --version
+          ${CC} --version
           echo "Using LLVM version:"
-          llvm-config --version
-          echo "LLVM CXX Flags:"
-          llvm-config --cxxflags
+          llvm-config --version || echo "llvm-config not found"
+          echo "LLVM Directory: ${LLVM_DIR}"
 
-      - name: Clean and Rebuild
+      - name: Configure CMake
         run: |
-          rm -rf build # Delete old build artifacts
-          
-          # Create a verbose CMake command with all needed flags
           cmake -B build -S . -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_OSX_ARCHITECTURES=${{ matrix.target }} \
@@ -91,15 +87,40 @@ jobs:
           PATH: ${{ env.PATH }}
           DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH }}
 
-      - name: Debug Static Library Issues (if build fails)
+      - name: Build Project
+        run: |
+          cmake --build build --config Debug
+        env:
+          PATH: ${{ env.PATH }}
+          DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH }}
+
+      - name: Debug Build Artifacts (if build fails)
         if: failure()
         run: |
-          file build/src/ir/libir_lib.a || echo "libir_lib.a not found"
-          file build/src/parser/libparser_lib.a || echo "libparser_lib.a not found"
-          nm -g build/src/ir/libir_lib.a || echo "No symbols in libir_lib.a"
-          nm -g build/src/parser/libparser_lib.a || echo "No symbols in libparser_lib.a"
+          echo "=== Checking for library files ==="
+          ls -la build/src/Frontend/ || echo "Frontend directory not found"
+          ls -la build/src/Codegen/ || echo "Codegen directory not found"
+          ls -la build/src/Optimizer/ || echo "Optimizer directory not found"
+          ls -la build/src/Utils/ || echo "Utils directory not found"
+          
+          echo "=== Checking library contents ==="
+          file build/src/Frontend/libfrontend_lib.a 2>/dev/null || echo "libfrontend_lib.a not found"
+          file build/src/Codegen/libcodegen_lib.a 2>/dev/null || echo "libcodegen_lib.a not found"
+          file build/src/Optimizer/liboptimizer_lib.a 2>/dev/null || echo "liboptimizer_lib.a not found"
+          file build/src/Utils/libutils_lib.a 2>/dev/null || echo "libutils_lib.a not found"
 
       - name: Run Tests
         run: |
           cd build
-          ninja run_all_tests
+          ctest --output-on-failure --verbose
+        env:
+          PATH: ${{ env.PATH }}
+          DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH }}
+          LD_LIBRARY_PATH: ${{ env.LD_LIBRARY_PATH }}
+
+      - name: Upload Test Results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: build/Testing/
