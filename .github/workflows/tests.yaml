@@ -73,42 +73,40 @@ jobs:
           brew update
           brew install cmake ninja llvm@19
           
-          # Store LLVM path for easy reference
+          # Store LLVM path
           LLVM_PREFIX=$(brew --prefix llvm@19)
           
-          # Set up environment variables
-          echo "LLVM_DIR=${LLVM_PREFIX}/lib/cmake/llvm" >> $GITHUB_ENV
+          # Set up compilers
           echo "CC=${LLVM_PREFIX}/bin/clang" >> $GITHUB_ENV
           echo "CXX=${LLVM_PREFIX}/bin/clang++" >> $GITHUB_ENV
+          echo "LLVM_DIR=${LLVM_PREFIX}/lib/cmake/llvm" >> $GITHUB_ENV
           
-          # Set compiler flags to use LLVM's libc++
-          echo "CXXFLAGS=-stdlib=libc++" >> $GITHUB_ENV
-          echo "LDFLAGS=-L${LLVM_PREFIX}/lib/c++ -Wl,-rpath,${LLVM_PREFIX}/lib/c++" >> $GITHUB_ENV
-          
-          # Set other required paths
+          # Add LLVM binary path to PATH (for llvm-config etc)
           echo "PATH=${LLVM_PREFIX}/bin:$PATH" >> $GITHUB_ENV
-          echo "DYLD_LIBRARY_PATH=${LLVM_PREFIX}/lib/c++:${LLVM_PREFIX}/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+          
+          # We construct flags here to pass to CMake directly later, 
+          # rather than polluting the global shell environment.
+          echo "MY_CXX_FLAGS=-stdlib=libc++" >> $GITHUB_ENV
+          echo "MY_LDFLAGS=-L${LLVM_PREFIX}/lib/c++ -Wl,-rpath,${LLVM_PREFIX}/lib/c++" >> $GITHUB_ENV
 
       - name: Verify LLVM Installation
         run: |
           echo "Using Clang version:"
           ${CC} --version
-          echo "Using LLVM version:"
-          llvm-config --version 2>/dev/null || echo "llvm-config not in PATH, checking specific location"
-          if [ "$RUNNER_OS" == "Linux" ]; then
-            /usr/lib/llvm-19/bin/llvm-config --version
-          fi
           echo "LLVM Directory: ${LLVM_DIR}"
 
       - name: Configure CMake
         run: |
+          # Pass the linker flags specifically to the build via CMake args
+          # DO NOT use DYLD_LIBRARY_PATH here
           cmake -B build -S . -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_CXX_FLAGS="${CXXFLAGS}" \
-            -DCMAKE_C_FLAGS="${CFLAGS}" \
-            -DCMAKE_EXE_LINKER_FLAGS="${LDFLAGS}" \
-            -DCMAKE_SHARED_LINKER_FLAGS="${LDFLAGS}" \
-            -DCMAKE_MODULE_LINKER_FLAGS="${LDFLAGS}"
+            -DCMAKE_CXX_COMPILER="${CXX}" \
+            -DCMAKE_C_COMPILER="${CC}" \
+            -DCMAKE_CXX_FLAGS="${MY_CXX_FLAGS}" \
+            -DCMAKE_EXE_LINKER_FLAGS="${MY_LDFLAGS}" \
+            -DCMAKE_SHARED_LINKER_FLAGS="${MY_LDFLAGS}" \
+            -DCMAKE_MODULE_LINKER_FLAGS="${MY_LDFLAGS}"
         env:
           LLVM_DIR: ${{ env.LLVM_DIR }}
           CC: ${{ env.CC }}
