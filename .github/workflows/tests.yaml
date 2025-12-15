@@ -28,13 +28,22 @@ jobs:
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libgtest-dev ninja-build llvm-19 llvm-19-dev clang-19 lld-19 lldb-19
           
+          # Add LLVM apt repository
+          wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
+          sudo add-apt-repository "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main"
+          sudo apt-get update
+          
+          # Install LLVM 19 and dependencies
+          sudo apt-get install -y cmake ninja-build \
+            llvm-19 llvm-19-dev llvm-19-tools \
+            clang-19 clang-tools-19 \
+            lld-19 libc++-19-dev libc++abi-19-dev
+          
+          # Set environment variables
           echo "LLVM_DIR=/usr/lib/llvm-19/lib/cmake/llvm" >> $GITHUB_ENV
           echo "CC=/usr/bin/clang-19" >> $GITHUB_ENV
           echo "CXX=/usr/bin/clang++-19" >> $GITHUB_ENV
-          echo "CMAKE_AR=/usr/bin/llvm-ar-19" >> $GITHUB_ENV
-          echo "CMAKE_RANLIB=/usr/bin/llvm-ranlib-19" >> $GITHUB_ENV
           echo "LD_LIBRARY_PATH=/usr/lib/llvm-19/lib:$LD_LIBRARY_PATH" >> $GITHUB_ENV
           echo "PATH=/usr/lib/llvm-19/bin:$PATH" >> $GITHUB_ENV
 
@@ -52,27 +61,29 @@ jobs:
           echo "CC=${LLVM_PREFIX}/bin/clang" >> $GITHUB_ENV
           echo "CXX=${LLVM_PREFIX}/bin/clang++" >> $GITHUB_ENV
           
-          # Critical fix - set compiler flags to use LLVM's libc++ instead of system
-          echo "CXXFLAGS=-stdlib=libc++ -nostdinc++ -I${LLVM_PREFIX}/include/c++/v1 -I${LLVM_PREFIX}/include" >> $GITHUB_ENV
-          echo "LDFLAGS=-L${LLVM_PREFIX}/lib -Wl,-rpath,${LLVM_PREFIX}/lib" >> $GITHUB_ENV
+          # Set compiler flags to use LLVM's libc++
+          echo "CXXFLAGS=-stdlib=libc++" >> $GITHUB_ENV
+          echo "LDFLAGS=-L${LLVM_PREFIX}/lib/c++ -Wl,-rpath,${LLVM_PREFIX}/lib/c++" >> $GITHUB_ENV
           
           # Set other required paths
           echo "PATH=${LLVM_PREFIX}/bin:$PATH" >> $GITHUB_ENV
-          echo "DYLD_LIBRARY_PATH=${LLVM_PREFIX}/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
+          echo "DYLD_LIBRARY_PATH=${LLVM_PREFIX}/lib/c++:${LLVM_PREFIX}/lib:$DYLD_LIBRARY_PATH" >> $GITHUB_ENV
 
       - name: Verify LLVM Installation
         run: |
           echo "Using Clang version:"
           ${CC} --version
           echo "Using LLVM version:"
-          llvm-config --version || echo "llvm-config not found"
+          llvm-config --version 2>/dev/null || echo "llvm-config not in PATH, checking specific location"
+          if [ "$RUNNER_OS" == "Linux" ]; then
+            /usr/lib/llvm-19/bin/llvm-config --version
+          fi
           echo "LLVM Directory: ${LLVM_DIR}"
 
       - name: Configure CMake
         run: |
           cmake -B build -S . -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_OSX_ARCHITECTURES=${{ matrix.target }} \
             -DCMAKE_CXX_FLAGS="${CXXFLAGS}" \
             -DCMAKE_C_FLAGS="${CFLAGS}" \
             -DCMAKE_EXE_LINKER_FLAGS="${LDFLAGS}" \
@@ -86,28 +97,27 @@ jobs:
           LDFLAGS: ${{ env.LDFLAGS }}
           PATH: ${{ env.PATH }}
           DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH }}
+          LD_LIBRARY_PATH: ${{ env.LD_LIBRARY_PATH }}
 
       - name: Build Project
         run: |
-          cmake --build build --config Debug
+          cmake --build build --config Debug --verbose
         env:
           PATH: ${{ env.PATH }}
           DYLD_LIBRARY_PATH: ${{ env.DYLD_LIBRARY_PATH }}
+          LD_LIBRARY_PATH: ${{ env.LD_LIBRARY_PATH }}
 
       - name: Debug Build Artifacts (if build fails)
         if: failure()
         run: |
           echo "=== Checking for library files ==="
-          ls -la build/src/Frontend/ || echo "Frontend directory not found"
-          ls -la build/src/Codegen/ || echo "Codegen directory not found"
-          ls -la build/src/Optimizer/ || echo "Optimizer directory not found"
-          ls -la build/src/Utils/ || echo "Utils directory not found"
+          ls -la build/src/Frontend/ 2>/dev/null || echo "Frontend directory not found"
+          ls -la build/src/Codegen/ 2>/dev/null || echo "Codegen directory not found"
+          ls -la build/src/Optimizer/ 2>/dev/null || echo "Optimizer directory not found"
+          ls -la build/src/Utils/ 2>/dev/null || echo "Utils directory not found"
           
-          echo "=== Checking library contents ==="
-          file build/src/Frontend/libfrontend_lib.a 2>/dev/null || echo "libfrontend_lib.a not found"
-          file build/src/Codegen/libcodegen_lib.a 2>/dev/null || echo "libcodegen_lib.a not found"
-          file build/src/Optimizer/liboptimizer_lib.a 2>/dev/null || echo "liboptimizer_lib.a not found"
-          file build/src/Utils/libutils_lib.a 2>/dev/null || echo "libutils_lib.a not found"
+          echo "=== CMake configuration output ==="
+          cat build/CMakeCache.txt 2>/dev/null || echo "CMakeCache.txt not found"
 
       - name: Run Tests
         run: |
