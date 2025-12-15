@@ -84,10 +84,9 @@ jobs:
           # Add LLVM binary path to PATH (for llvm-config etc)
           echo "PATH=${LLVM_PREFIX}/bin:$PATH" >> $GITHUB_ENV
           
-          # We construct flags here to pass to CMake directly later, 
-          # rather than polluting the global shell environment.
-          echo "MY_CXX_FLAGS=-stdlib=libc++" >> $GITHUB_ENV
-          echo "MY_LDFLAGS=-L${LLVM_PREFIX}/lib/c++ -Wl,-rpath,${LLVM_PREFIX}/lib/c++" >> $GITHUB_ENV
+          SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
+          echo "SDKROOT=${SDKROOT}" >> $GITHUB_ENV
+
 
       - name: Verify LLVM Installation
         run: |
@@ -101,12 +100,13 @@ jobs:
           # DO NOT use DYLD_LIBRARY_PATH here
           cmake -B build -S . -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_CXX_COMPILER="${CXX}" \
             -DCMAKE_C_COMPILER="${CC}" \
-            -DCMAKE_CXX_FLAGS="${MY_CXX_FLAGS}" \
-            -DCMAKE_EXE_LINKER_FLAGS="${MY_LDFLAGS}" \
-            -DCMAKE_SHARED_LINKER_FLAGS="${MY_LDFLAGS}" \
-            -DCMAKE_MODULE_LINKER_FLAGS="${MY_LDFLAGS}"
+            -DCMAKE_CXX_COMPILER="${CXX}" \
+            -DCMAKE_OSX_SYSROOT="${SDKROOT}" \
+            -DCMAKE_OSX_DEPLOYMENT_TARGET=13.0 \
+            -DCMAKE_CXX_STANDARD=17 \
+            -DCMAKE_CXX_STANDARD_REQUIRED=ON
+
         env:
           LLVM_DIR: ${{ env.LLVM_DIR }}
           CC: ${{ env.CC }}
