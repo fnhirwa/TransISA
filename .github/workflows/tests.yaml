@@ -24,6 +24,26 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
+      - name: Debug - List repository contents
+        run: |
+          echo "=== Repository root ==="
+          ls -la
+          echo ""
+          echo "=== src/ directory ==="
+          ls -la src/
+          echo ""
+          echo "=== src subdirectories ==="
+          ls -la src/Frontend/ || echo "Frontend directory not found"
+          ls -la src/Codegen/ || echo "Codegen directory not found"
+          ls -la src/Optimizer/ || echo "Optimizer directory not found"
+          ls -la src/Utils/ || echo "Utils directory not found"
+          echo ""
+          echo "=== Looking for all CMakeLists.txt files ==="
+          find . -name "CMakeLists.txt" -type f
+          echo ""
+          echo "=== Checking for case sensitivity issues ==="
+          find src/ -type d
+
       - name: Install dependencies (Ubuntu)
         if: runner.os == 'Linux'
         run: |
