@@ -1,2 +1,3 @@
 # TransISA
-Implementation of the transpiler for CISC to RISC translation
+
+An LLVM-based framework for lifting machine code to LLVM IR and generating optimized binaries for different ISAs.

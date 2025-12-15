@@ -70,26 +70,14 @@ llvm_map_components_to_libnames(
   x86info)
 
 # Add test executables
-add_executable(test_lexer test_lexer.cpp)
-add_executable(test_parser test_parser.cpp)
-add_executable(test_llvm_codegen test_llvm_codegen.cpp)
+add_executable(test_frontend test_frontend.cpp)
 
 # Link all libraries to the test executables
-target_link_libraries(test_lexer PRIVATE codegen_lib gtest_main)
-target_link_libraries(test_parser PRIVATE codegen_lib gtest_main)
-target_link_libraries(test_llvm_codegen PRIVATE codegen_lib gtest_main)
+target_link_libraries(
+  test_frontend PRIVATE frontend_lib codegen_lib optimizer_lib utils_lib
+                        gtest_main ${LLVM_LIBS})
 
-# Enable testing
+# Enable testing and discover tests
 enable_testing()
-
-# Add individual tests
-add_test(NAME LexerTest COMMAND test_lexer)
-add_test(NAME ParserTest COMMAND test_parser)
-add_test(NAME IRGenTest COMMAND test_llvm_codegen)
-
-# Add a custom target to run all tests
-add_custom_target(
-  run_all_tests
-  COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure
-  DEPENDS test_lexer test_parser test_llvm_codegen
-  COMMENT "Running all tests...")
+include(GoogleTest)
+gtest_discover_tests(test_frontend)
