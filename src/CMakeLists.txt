@@ -26,34 +26,6 @@ if(NOT DEFINED LLVM_DIR)
   )
 endif()
 
-if(DEFINED ENV{CMAKE_OSX_ARCHITECTURES})
-  set(CMAKE_OSX_ARCHITECTURES $ENV{CMAKE_OSX_ARCHITECTURES})
-else()
-  set(CMAKE_OSX_ARCHITECTURES "arm64")
-endif()
-
-# Detect Platform
-if(CMAKE_SYSTEM_NAME STREQUAL "Darwin")
-  message(STATUS "Building for macOS")
-
-  # Set architecture (arm64 or x86_64) based on environment variable
-  if(DEFINED ENV{CMAKE_OSX_ARCHITECTURES})
-    set(CMAKE_OSX_ARCHITECTURES $ENV{CMAKE_OSX_ARCHITECTURES})
-    message(STATUS "Target architecture: ${CMAKE_OSX_ARCHITECTURES}")
-  endif()
-
-  # Optimization flags for macOS arm64
-  if(CMAKE_OSX_ARCHITECTURES STREQUAL "arm64")
-    add_compile_options(-mcpu=apple-m1 -O3)
-  endif()
-
-elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
-  message(STATUS "Building for Linux")
-
-  # Optimization flags for Linux x86_64
-  add_compile_options(-march=native -O3)
-endif()
-
 # Find LLVM package
 find_package(LLVM REQUIRED CONFIG)
 
@@ -64,41 +36,30 @@ add_definitions(${LLVM_DEFINITIONS})
 # Map LLVM components to library names
 llvm_map_components_to_libnames(
   LLVM_LIBS
-  # Core and IR
   support
   core
-  irreader
   mc
-  scalaropts
-  asmparser
-  asmprinter
-  # aarch64 backend
+  x86asmparser
+  x86codegen
+  x86desc
+  x86disassembler
+  x86info
   aarch64asmparser
   aarch64codegen
   aarch64desc
   aarch64disassembler
   aarch64info
-  aarch64utils
-  bitwriter
-  # ARM backend ARM ARMCodeGen ARMAsmParser ARMDesc ARMDisassembler ARMInfo
-  # ARMUtils # X86 backend
-  x86asmparser
-  x86codegen
-  x86desc
-  x86disassembler
-  x86info)
+  aarch64utils)
 
-# Add include directories
-include_directories(${CMAKE_SOURCE_DIR}/include)
-
-# subdirectories
-add_subdirectory(lexer)
-add_subdirectory(llvm_ir)
-add_subdirectory(codegen)
-add_subdirectory(parser)
+# Add subdirectories for component libraries
+add_subdirectory(Frontend)
+add_subdirectory(Codegen)
+add_subdirectory(Optimizer)
+add_subdirectory(Utils)
 
 # Executable
 add_executable(TransISA main.cpp)
 
 # Link the libraries
-target_link_libraries(TransISA PRIVATE codegen_lib ${LLVM_LIBS})
+target_link_libraries(TransISA PRIVATE frontend_lib codegen_lib optimizer_lib
+                                       utils_lib ${LLVM_LIBS})

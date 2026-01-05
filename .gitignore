@@ -36,4 +36,17 @@ build/
 .vscode/
 codes_86/
 _deps/
-*.dSYM/
+
+# LLVM generated files
+*.ll
+*.bc
+*.s
+
+# docs
+docs/html/
+
+# machine binaries
+.DS_Store
+
+# becnhmarks
+benchmarking/
