@@ -1,4 +1,7 @@
 #include "llvm_ir/LLVMIRGenerator.h"
+#include "llvm/Analysis/CGSCCPassManager.h"
+#include "llvm/Analysis/LoopAnalysisManager.h"
+#include "llvm/Passes/PassBuilder.h"
 
 /*=============================================================*/
 /*Utility functions for generating inline assembly for syscalls*/
@@ -374,6 +377,25 @@ llvm::Module* LLVMIRGen::generateIR(std::unique_ptr<ASTNode>& root) {
       visitFunctionNode(func);
     }
   }
+  llvm::PassBuilder PB;
+  llvm::LoopAnalysisManager LAM;
+  llvm::FunctionAnalysisManager FAM;
+  llvm::CGSCCAnalysisManager CGAM;
+  llvm::ModuleAnalysisManager MAM;
+
+  // mem2reg is the most impactful pass for your alloca-heavy IR
+  // It promotes register allocas to SSA values — critical for code quality
+  PB.registerModuleAnalyses(MAM);
+  PB.registerCGSCCAnalyses(CGAM);
+  PB.registerFunctionAnalyses(FAM);
+  PB.registerLoopAnalyses(LAM);
+  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+  // mem2reg is the most impactful pass for your alloca-heavy IR
+  // It promotes register allocas to SSA values — critical for code quality
+  llvm::ModulePassManager MPM =
+      PB.buildPerModuleDefaultPipeline(llvm::OptimizationLevel::O2);
+  MPM.run(module, MAM);
   return &module;
 }
 
