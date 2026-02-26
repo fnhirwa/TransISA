@@ -27,21 +27,22 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y wget gnupg lsb-release
-
           wget -O - https://apt.llvm.org/llvm-snapshot.gpg.key | sudo apt-key add -
           sudo add-apt-repository "deb http://apt.llvm.org/jammy/ llvm-toolchain-jammy-19 main"
           sudo apt-get update
-
           sudo apt-get install -y \
             cmake ninja-build \
             llvm-19 llvm-19-dev llvm-19-tools \
             clang-19 clang-tools-19 \
             lld-19 libc++-19-dev libc++abi-19-dev
 
-          echo "CC=/usr/bin/clang-19" >> $GITHUB_ENV
-          echo "CXX=/usr/bin/clang++-19" >> $GITHUB_ENV
+          # Critical Fixes:
+          echo "CC=clang-19" >> $GITHUB_ENV
+          echo "CXX=clang++-19" >> $GITHUB_ENV
+          # Force Clang to use the LLVM Standard Library instead of GNU
+          echo "CXXFLAGS=-stdlib=libc++" >> $GITHUB_ENV
+          echo "LDFLAGS=-stdlib=libc++" >> $GITHUB_ENV
           echo "LLVM_DIR=/usr/lib/llvm-19/lib/cmake/llvm" >> $GITHUB_ENV
-          echo "PATH=/usr/lib/llvm-19/bin:$PATH" >> $GITHUB_ENV
 
       - name: Install dependencies (macOS)
         if: runner.os == 'macOS'
@@ -69,11 +70,10 @@ jobs:
       - name: Configure CMake (Ubuntu)
         if: runner.os == 'Linux'
         run: |
-          rm -rf build
           cmake -B build -S . -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_C_COMPILER="$CC" \
-            -DCMAKE_CXX_COMPILER="$CXX" \
+            -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
+            -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -lc++abi" \
             -DCMAKE_CXX_STANDARD=17 \
             -DCMAKE_CXX_STANDARD_REQUIRED=ON
 
