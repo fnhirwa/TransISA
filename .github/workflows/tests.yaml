@@ -34,14 +34,10 @@ jobs:
             cmake ninja-build \
             llvm-19 llvm-19-dev llvm-19-tools \
             clang-19 clang-tools-19 \
-            lld-19 libc++-19-dev libc++abi-19-dev
+            lld-19 libstdc++-12-dev
 
-          # Critical Fixes:
           echo "CC=clang-19" >> $GITHUB_ENV
           echo "CXX=clang++-19" >> $GITHUB_ENV
-          # Force Clang to use the LLVM Standard Library instead of GNU
-          echo "CXXFLAGS=-stdlib=libc++" >> $GITHUB_ENV
-          echo "LDFLAGS=-stdlib=libc++" >> $GITHUB_ENV
           echo "LLVM_DIR=/usr/lib/llvm-19/lib/cmake/llvm" >> $GITHUB_ENV
 
       - name: Install dependencies (macOS)
@@ -72,10 +68,9 @@ jobs:
         run: |
           cmake -B build -S . -G Ninja \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_CXX_FLAGS="-stdlib=libc++" \
-            -DCMAKE_EXE_LINKER_FLAGS="-stdlib=libc++ -lc++abi" \
             -DCMAKE_CXX_STANDARD=17 \
-            -DCMAKE_CXX_STANDARD_REQUIRED=ON
+            -DCMAKE_CXX_STANDARD_REQUIRED=ON \
+            -DLLVM_DIR=/usr/lib/llvm-19/lib/cmake/llvm
 
       - name: Configure CMake (macOS)
         if: runner.os == 'macOS'
