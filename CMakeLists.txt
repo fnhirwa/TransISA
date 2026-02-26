@@ -20,6 +20,9 @@ endif()
 # include directory
 include_directories(include)
 
+# Enable testing (must be in root CMakeLists.txt for CTest to discover tests)
+enable_testing()
+
 # Add subdirectories
 add_subdirectory(src)
 add_subdirectory(tests)

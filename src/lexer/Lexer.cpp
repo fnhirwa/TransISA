@@ -12,6 +12,8 @@ std::vector<std::string> punctuations =
 // types This will also store the directives and other keywords like .file,
 // .section, etc.
 Lexer::Lexer(const std::string_view& source) : source(source) {
+  preprocessedSource_ = preprocess(std::string(source));
+  this->source = preprocessedSource_;
   keywordTrie = std::make_unique<Trie>();
   keywordTrie->insert("mov", TokenType::INSTRUCTION);
   keywordTrie->insert("add", TokenType::INSTRUCTION);
@@ -307,6 +309,313 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert(":", TokenType::COLON);
   keywordTrie->insert("[", TokenType::L_BRACKET);
   keywordTrie->insert("]", TokenType::R_BRACKET);
+
+  // some more directives
+  // In Lexer constructor, with your existing DIRECTIVE inserts:
+  keywordTrie->insert(".att_syntax", TokenType::DIRECTIVE);
+  keywordTrie->insert(".intel_syntax", TokenType::DIRECTIVE);
+  keywordTrie->insert(".p2align", TokenType::DIRECTIVE);
+  keywordTrie->insert(".balign", TokenType::DIRECTIVE);
+  keywordTrie->insert(".weak", TokenType::DIRECTIVE);
+  keywordTrie->insert(".comm", TokenType::DIRECTIVE);
+  keywordTrie->insert(".lcomm", TokenType::DIRECTIVE);
+  keywordTrie->insert(".set", TokenType::DIRECTIVE);
+  keywordTrie->insert(".equ", TokenType::DIRECTIVE);
+  keywordTrie->insert(".hidden", TokenType::DIRECTIVE);
+  keywordTrie->insert(".protected", TokenType::DIRECTIVE);
+  keywordTrie->insert(".skip", TokenType::DIRECTIVE);
+  keywordTrie->insert(".space", TokenType::DIRECTIVE);
+}
+// Some of the directives carry no semantic value during IR building
+static const std::unordered_set<std::string> discardablePrefixes = {
+    ".cfi_", // all CFI unwind directives
+    ".loc", // debug location
+    ".loc\t",
+    ".file", // debug file table
+    ".file\t",
+    ".ident", // compiler ident string
+    ".addrsig", // address significance table (LLD)
+    "Lfunc_end", // local end-of-function labels emitted by clang
+    ".type", // GAS symbol type annotation (.type sym, @function)
+};
+
+// GAS mnemonics size suffixes to strip
+// only strip when the suffix is LAST char and the base is known to be valid.
+// using a simple char check: b/w/l/q/s/d at the end of the mnemonic.
+static const std::unordered_set<std::string> knownMnemonics = {
+    "mov", "add",  "sub",  "imul", "idiv", "and", "or",   "xor", "not", "neg",
+    "cmp", "test", "push", "pop",  "lea",  "ret", "call", "jmp", "je",  "jne",
+    "jl",  "jle",  "jg",   "jge",  "jz",   "jnz", "shl",  "shr", "sar", "sal",
+    "inc", "dec",  "movs", "movz", "cbw",  "cwd", "cdq",  "cqo",
+};
+
+// top level entry point for preprocessing
+std::string Lexer::preprocess(const std::string& raw) {
+  detectedMode_ = detectSyntax(raw);
+  bool isATT = (detectedMode_ == SyntaxMode::ATT);
+
+  std::ostringstream out;
+  std::istringstream in(raw);
+  std::string line;
+  while (std::getline(in, line)) {
+    std::string result = processLine(line, isATT);
+    if (!result.empty())
+      out << result << '\n';
+  }
+  return out.str();
+}
+
+SyntaxMode Lexer::detectSyntax(const std::string& raw) {
+  if (raw.find(".intel_syntax") != std::string::npos)
+    return SyntaxMode::Intel;
+  if (raw.find(".att_syntax") != std::string::npos)
+    return SyntaxMode::ATT;
+
+  // heuristic: count lines with '%' (AT&T registers) vs '[' (Intel memory)
+  int attVotes = 0, intelVotes = 0;
+  std::istringstream ss(raw);
+  std::string line;
+  while (std::getline(ss, line)) {
+    if (line.find('%') != std::string::npos)
+      ++attVotes;
+    if (line.find('[') != std::string::npos)
+      ++intelVotes;
+  }
+  return (attVotes > intelVotes) ? SyntaxMode::ATT : SyntaxMode::Intel;
+}
+
+bool Lexer::isDiscardableDirective(const std::string& line) {
+  for (const auto& prefix : discardablePrefixes)
+    if (line.rfind(prefix, 0) == 0)
+      return true;
+  return false;
+}
+
+std::string Lexer::processLine(const std::string& line, bool isATT) {
+  // trim leading whitespace for prefix checks
+  size_t firstNonSpace = line.find_first_not_of(" \t");
+  if (firstNonSpace == std::string::npos)
+    return ""; // blank line → discard
+
+  std::string trimmed = line.substr(firstNonSpace);
+
+  // discard full-line comments
+  if (trimmed[0] == '#' || trimmed[0] == ';')
+    return "";
+
+  // discard semantically irrelevant directives
+  if (isDiscardableDirective(trimmed))
+    return "";
+
+  if (!isATT) {
+    // intel mode: only normalize ';' comments (already correct)
+    // strip inline # comments that GAS sometimes emits even in intel mode
+    size_t hashPos = trimmed.find('#');
+    if (hashPos != std::string::npos)
+      trimmed = trimmed.substr(0, hashPos);
+    // trim trailing whitespace
+    size_t last = trimmed.find_last_not_of(" \t");
+    return (last != std::string::npos) ? trimmed.substr(0, last + 1) : "";
+  }
+
+  // ATT normalization pipeline:
+  // strip inline # comments first
+  size_t hashPos = trimmed.find('#');
+  if (hashPos != std::string::npos)
+    trimmed = trimmed.substr(0, hashPos);
+
+  // trim trailing whitespace
+  size_t last = trimmed.find_last_not_of(" \t");
+  if (last != std::string::npos)
+    trimmed = trimmed.substr(0, last + 1);
+  if (trimmed.empty())
+    return "";
+
+  // if this is a label line (ends with ':'), pass through unchanged
+  if (trimmed.back() == ':')
+    return trimmed;
+
+  // if this is a directive line (starts with '.'), pass through
+  //    (segment directives like .text, .data, .globl etc. stay as-is)
+  if (trimmed[0] == '.')
+    return trimmed;
+
+  // split into mnemonic + operand string
+  size_t spacePos = trimmed.find_first_of(" \t");
+  std::string mnemonic = trimmed.substr(0, spacePos);
+  std::string operands =
+      (spacePos != std::string::npos) ? trimmed.substr(spacePos + 1) : "";
+
+  // trim operands leading whitespace
+  size_t opStart = operands.find_first_not_of(" \t");
+  if (opStart != std::string::npos)
+    operands = operands.substr(opStart);
+
+  // strip size suffix from mnemonic (movl -> mov, addq -> add)
+  mnemonic = stripSizeSuffix(mnemonic);
+
+  // normalize operands (strip %, $, convert memory, reverse order)
+  std::string normalizedOps = normalizeOperandList(mnemonic, operands);
+
+  if (normalizedOps.empty())
+    return mnemonic;
+  return mnemonic + " " + normalizedOps;
+}
+
+// GAS suffix stripping logic: only strip if the base mnemonic is known to be
+// valid
+std::string Lexer::stripSizeSuffix(const std::string& mnemonic) {
+  if (mnemonic.size() < 2)
+    return mnemonic;
+
+  char last = mnemonic.back();
+  // valid GAS suffixes: b(byte) w(word) l(long/32) q(quad/64) s(float)
+  // d(double)
+  if (last != 'b' && last != 'w' && last != 'l' && last != 'q' && last != 's' &&
+      last != 'd')
+    return mnemonic;
+
+  std::string base = mnemonic.substr(0, mnemonic.size() - 1);
+  if (knownMnemonics.count(base))
+    return base;
+
+  // handle two-char suffixes like movzbl, movsbq
+  if (mnemonic.size() >= 3) {
+    char secondLast = mnemonic[mnemonic.size() - 2];
+    if ((secondLast == 'b' || secondLast == 'w' || secondLast == 'l') &&
+        (last == 'l' || last == 'q')) {
+      std::string base2 = mnemonic.substr(0, mnemonic.size() - 2);
+      if (knownMnemonics.count(base2))
+        return base2;
+    }
+  }
+  return mnemonic;
+}
+
+// convert AT&T memory operand to Intel bracket notation
+// AT&T forms:
+//   (%rbp)          -> [rbp]
+//   -8(%rbp)        -> [rbp-8]
+//   8(%rbp)         -> [rbp+8]
+//   (%rax,%rbx,4)   -> [rax+rbx*4]
+//   -4(%rax,%rbx,2) -> [rax+rbx*2-4]
+std::string Lexer::convertMemoryOperand(const std::string& op) {
+  // must contain '(' to be a memory operand
+  size_t lp = op.find('(');
+  if (lp == std::string::npos)
+    return op;
+
+  size_t rp = op.find(')', lp);
+  if (rp == std::string::npos)
+    return op;
+
+  std::string disp = op.substr(0, lp); // displacement before '('
+  std::string inner = op.substr(lp + 1, rp - lp - 1); // inside parens
+
+  // strip '%' from everything inside
+  std::string cleanInner;
+  for (char c : inner)
+    if (c != '%')
+      cleanInner += c;
+
+  // parse inner: base, index, scale separated by commas
+  std::vector<std::string> parts;
+  std::istringstream ss(cleanInner);
+  std::string part;
+  while (std::getline(ss, part, ',')) {
+    // trim
+    size_t s = part.find_first_not_of(" \t");
+    size_t e = part.find_last_not_of(" \t");
+    if (s != std::string::npos)
+      parts.push_back(part.substr(s, e - s + 1));
+  }
+
+  std::string result = "[";
+  if (!parts.empty())
+    result += parts[0]; // base
+  if (parts.size() >= 2 && !parts[1].empty()) {
+    result += "+" + parts[1]; // index
+    if (parts.size() >= 3 && !parts[2].empty() && parts[2] != "1")
+      result += "*" + parts[2]; // scale (omit *1)
+  }
+  // displacement
+  if (!disp.empty()) {
+    // disp already has sign (e.g. "-8" or "8")
+    if (disp[0] == '-')
+      result += disp; // [rbp-8]
+    else
+      result += "+" + disp; // [rbp+8]
+  }
+  result += "]";
+  return result;
+}
+
+// normalize a full operand list: split on commas, normalize each operand, then
+// reverse order for 2-operand instructions
+std::string Lexer::normalizeOperandList(
+    const std::string& mnemonic,
+    const std::string& operands) {
+  if (operands.empty())
+    return "";
+
+  // split operands on ',' but not inside '(' ')'
+  std::vector<std::string> ops;
+  std::string current;
+  int depth = 0;
+  for (char c : operands) {
+    if (c == '(')
+      ++depth;
+    else if (c == ')')
+      --depth;
+    if (c == ',' && depth == 0) {
+      ops.push_back(current);
+      current.clear();
+    } else {
+      current += c;
+    }
+  }
+  if (!current.empty())
+    ops.push_back(current);
+
+  // normalize each operand
+  for (auto& op : ops) {
+    // trim
+    size_t s = op.find_first_not_of(" \t");
+    size_t e = op.find_last_not_of(" \t");
+    if (s == std::string::npos) {
+      op = "";
+      continue;
+    }
+    op = op.substr(s, e - s + 1);
+
+    if (op[0] == '%') {
+      // register: strip '%'
+      op = op.substr(1);
+    } else if (op[0] == '$') {
+      // immediate: strip '$'
+      op = op.substr(1);
+    } else if (op.find('(') != std::string::npos) {
+      // memory operand
+      op = convertMemoryOperand(op);
+    }
+    // else: label/identifier — leave as-is
+  }
+
+  // reverse operand order for AT&T → Intel (src,dst → dst,src)
+  // but only for 2-operand instructions. Single operand (push, pop, jmp,
+  // call, inc, dec, not, neg) keep their order.
+  if (ops.size() == 2) {
+    std::reverse(ops.begin(), ops.end());
+  }
+
+  // rejoin
+  std::string result;
+  for (size_t i = 0; i < ops.size(); ++i) {
+    if (i > 0)
+      result += ", ";
+    result += ops[i];
+  }
+  return result;
 }
 
 // Report an error within the lexer
@@ -343,8 +652,11 @@ void Lexer::skipWhitespace() {
     if (peek() == '\n') {
       line++;
       column = 0;
+      position++; // advance past '\n' without calling advance() to avoid
+                  // incrementing column
+    } else {
+      advance();
     }
-    advance();
   }
 }
 
@@ -653,6 +965,14 @@ Token Lexer::readString() {
 std::vector<Token> Lexer::tokenize() {
   std::vector<Token> tokens;
 
+  // Overwrite the token's line/column with the position captured just BEFORE
+  // the read function consumed any characters (start-of-token, not end).
+  auto withStartPos = [&](Token t) -> Token {
+    t.line = tokenStartLine_;
+    t.column = tokenStartCol_;
+    return t;
+  };
+
   while (position < source.size()) {
     skipWhitespace(); // Then skip remaining spaces
     while (peek() == ';') { // Ensure all comments are skipped
@@ -661,7 +981,8 @@ std::vector<Token> Lexer::tokenize() {
     }
     if (position >= source.size())
       break;
-
+    tokenStartLine_ = line;
+    tokenStartCol_ = column + 1;
     char c = peek();
 
     if (isalnum(c) || c == '.' || c == '_') {
@@ -671,24 +992,24 @@ std::vector<Token> Lexer::tokenize() {
       if (c == '.' || "_") {
         size_t nextBracket = source.find('[', position);
         if (nextColon != std::string::npos && nextColon < nextWhitespace) {
-          tokens.push_back(readLabel());
+          tokens.push_back(withStartPos(readLabel()));
         } else if (
             nextBracket != std::string::npos && nextBracket < nextWhitespace) {
-          tokens.push_back(readLabel());
+          tokens.push_back(withStartPos(readLabel()));
         } else {
           if (c == '.' || c == '_') {
-            tokens.push_back(readDirective());
+            tokens.push_back(withStartPos(readDirective()));
           } else {
-            tokens.push_back(readValue());
+            tokens.push_back(withStartPos(readValue()));
           }
         }
       } else if (nextColon != std::string::npos && nextColon < nextWhitespace) {
-        tokens.push_back(readLabel());
+        tokens.push_back(withStartPos(readLabel()));
       } else {
-        tokens.push_back(readValue());
+        tokens.push_back(withStartPos(readValue()));
       }
     } else if (c == '"' || c == '\'') {
-      tokens.push_back(readString());
+      tokens.push_back(withStartPos(readString()));
     } else if (
         isdigit(c) ||
         (c == '0' && position + 1 < source.size() &&
@@ -697,28 +1018,31 @@ std::vector<Token> Lexer::tokenize() {
           source[position + 1] == 'O' || source[position + 1] == 'q')) ||
         (c == '-' && position + 1 < source.size() &&
          isdigit(source[position + 1]))) {
-      tokens.push_back(readImmediate());
+      tokens.push_back(withStartPos(readImmediate()));
     } else if (c == ',') {
-      tokens.push_back(readComma());
+      tokens.push_back(withStartPos(readComma()));
     } else if (c == ':') {
-      tokens.push_back(readColon());
+      tokens.push_back(withStartPos(readColon()));
     } else if (c == '[') {
-      tokens.push_back(readLeftBracket());
+      tokens.push_back(withStartPos(readLeftBracket()));
     } else if (c == ']') {
-      tokens.push_back(readRightBracket());
+      tokens.push_back(withStartPos(readRightBracket()));
     } else if (c == ';') {
       skipComment();
     } else if (
         std::find(
             punctuations.begin(), punctuations.end(), std::string(1, c)) !=
         punctuations.end()) {
-      tokens.push_back(readPunctuation());
+      tokens.push_back(withStartPos(readPunctuation()));
     } else {
       reportError("Unexpected character: " + std::string(1, c));
     }
   }
 
-  tokens.push_back({TokenType::END, "END", "END", line, column});
+  // Place END on the same line as the last real token (not the line after a
+  // trailing newline).
+  size_t endLine = tokens.empty() ? line : tokens.back().line;
+  tokens.push_back({TokenType::END, "END", "END", endLine, column});
   return tokens;
 }
 

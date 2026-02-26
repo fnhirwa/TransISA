@@ -79,9 +79,6 @@ target_link_libraries(test_lexer PRIVATE codegen_lib gtest_main)
 target_link_libraries(test_parser PRIVATE codegen_lib gtest_main)
 target_link_libraries(test_llvm_codegen PRIVATE codegen_lib gtest_main)
 
-# Enable testing
-enable_testing()
-
 # Add individual tests
 add_test(NAME LexerTest COMMAND test_lexer)
 add_test(NAME ParserTest COMMAND test_parser)

@@ -847,11 +847,22 @@ void LLVMIRGen::handleIntInstructionNode(InstructionNode* node) {
   int interruptNumber = intLit->value;
 
   if (interruptNumber == 0x80) {
-    // Get syscall number from EAX
-    llvm::Value* syscallNumber = getNamedValue("eax");
-    if (!syscallNumber) {
+    // Get syscall number from EAX — registers are stored as i32 allocas,
+    // so load the i32 value and zero-extend to i64 to match the syscall ABI.
+    llvm::Value* eaxPtr = getNamedValue("eax");
+    if (!eaxPtr) {
       std::cerr << "Error: EAX not set before 'int 0x80'\n";
       return;
+    }
+    llvm::Value* syscallNumber;
+    if (eaxPtr->getType()->isPointerTy()) {
+      llvm::Value* eaxVal = builder.CreateLoad(
+          llvm::Type::getInt32Ty(context), eaxPtr, "eax_val");
+      syscallNumber = builder.CreateZExt(
+          eaxVal, llvm::Type::getInt64Ty(context), "syscall_num");
+    } else {
+      syscallNumber = builder.CreateZExtOrTrunc(
+          eaxPtr, llvm::Type::getInt64Ty(context), "syscall_num");
     }
     llvm::Function* currentfunction = builder.GetInsertBlock()->getParent();
 #ifdef __x86_64__
@@ -875,15 +886,19 @@ void LLVMIRGen::handleIntInstructionNode(InstructionNode* node) {
           syscallType, llvm::Function::ExternalLinkage, "syscall", module);
     }
 
-    // Helper function to get register value or zero
+    // Helper function to get register value (as i64) or zero
     auto getRegValue = [&](const std::string& reg) -> llvm::Value* {
       if (namedValues.count(reg)) {
         llvm::Value* regVal = namedValues[reg];
-        // If it's a pointer to the register, load it
+        // Registers are stored as i32 allocas; load i32 then zero-extend to i64
         if (regVal->getType()->isPointerTy()) {
-          return builder.CreateLoad(llvm::Type::getInt64Ty(context), regVal);
+          llvm::Value* loaded = builder.CreateLoad(
+              llvm::Type::getInt32Ty(context), regVal, reg + "_i32");
+          return builder.CreateZExt(
+              loaded, llvm::Type::getInt64Ty(context), reg + "_i64");
         }
-        return regVal;
+        return builder.CreateZExtOrTrunc(
+            regVal, llvm::Type::getInt64Ty(context), reg + "_i64");
       }
       return llvm::ConstantInt::get(context, llvm::APInt(64, 0));
     };
