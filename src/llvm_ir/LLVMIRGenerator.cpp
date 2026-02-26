@@ -618,6 +618,9 @@ void LLVMIRGen::visitInstructionNode(InstructionNode* node) {
   } else if (jumpOpTable.find(node->opcode) != jumpOpTable.end()) {
     handleBranchingInstructions(node);
     return;
+  } else if (node->opcode == "end") {
+    // NASM end-of-file marker — no IR to emit
+    return;
   } else {
     std::cerr << "Unsuppoerted operand type: " << node->opcode << "\n";
     return;
