@@ -670,10 +670,6 @@ void Lexer::skipComment() {
   }
 }
 
-//=============================================================//
-//                 Reading different tokens                   //
-//===========================================================//
-
 // Read an instruction from the input string
 Token Lexer::readInstruction() {
   std::string value;
@@ -956,10 +952,6 @@ Token Lexer::readString() {
   value = value.substr(1, value.size() - 2) + '\n';
   return {TokenType::STRING, value, "STRING", line, column};
 }
-
-//==========================================================//
-//                    Tokenization                          //
-//=========================================================//
 
 // Tokenize the input string
 std::vector<Token> Lexer::tokenize() {

@@ -4,10 +4,6 @@
 #include <vector>
 #include "lexer/Lexer.h"
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Helpers
-// ─────────────────────────────────────────────────────────────────────────────
-
 static std::vector<Token> tokenizeString(const std::string& src) {
   Lexer lexer(src);
   return lexer.tokenize();
@@ -31,10 +27,6 @@ static void assertToken(
   EXPECT_EQ(actual.column, expectedCol)
       << "column mismatch for: " << actual.value;
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Layer 2 — Intel / NASM syntax tokenization (regression baseline)
-// ─────────────────────────────────────────────────────────────────────────────
 
 // Simple arithmetic: confirms instruction + register + immediate tokenization
 TEST(LexerIntel, AddInstruction) {
@@ -129,10 +121,6 @@ TEST(LexerIntel, NASMHelloWorld) {
   EXPECT_EQ(leaCount, 1);
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Layer 1 — Preprocessing: AT&T syntax detection
-// ─────────────────────────────────────────────────────────────────────────────
-
 TEST(LexerPreprocess, DetectsATTSyntax) {
   // AT&T file should set detectedMode to ATT
   const std::string attSrc = "movl %eax, %ebx\n";
@@ -167,10 +155,6 @@ TEST(LexerPreprocess, DiscardsCFIDirectives) {
       foundMov = true;
   EXPECT_TRUE(foundMov);
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Layer 3 — End-to-end: AT&T input produces same tokens as Intel equivalent
-// ─────────────────────────────────────────────────────────────────────────────
 
 // AT&T:   addl %ebx, %eax   →  Intel: add eax, ebx
 TEST(LexerATT, AddNormalizesToIntel) {
@@ -252,8 +236,6 @@ TEST(LexerATT, GCCEmittedFunction) {
     }
   }
 }
-
-// ─────────────────────────────────────────────────────────────────────────────
 
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);

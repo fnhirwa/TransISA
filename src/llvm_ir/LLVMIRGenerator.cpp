@@ -1,9 +1,5 @@
 #include "llvm_ir/LLVMIRGenerator.h"
 
-/*=============================================================*/
-/*Utility functions for generating inline assembly for syscalls*/
-/*=============================================================*/
-
 std::string generateLinuxARM64InlineAsm(size_t argCount, int syscallNumber) {
   std::ostringstream asmCode;
 
@@ -153,10 +149,6 @@ llvm::Value* SyscallBuilder::emitGenericSyscall(
 
   return emitSyscall(builder, context, module, fullArgs, 0, targetABI);
 }
-
-/*=============================================================*/
-/*              Other utility functions*                       */
-/*=============================================================*/
 
 // Loading or getting the register
 llvm::Value* LLVMIRGen::getOrLoadRegister(const std::string& regName) {

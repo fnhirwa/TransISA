@@ -51,10 +51,6 @@ class Metrics:
     correct: str = "—"
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 def run(cmd, capture=True, timeout=10):
     """Run a shell command and return stdout, or empty string on failure."""
     try:
@@ -75,10 +71,6 @@ def run_retcode(cmd, timeout=10):
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
         return -1
 
-
-# ---------------------------------------------------------------------------
-# Metric collection
-# ---------------------------------------------------------------------------
 
 def count_instructions_objdump(binary_path):
     """Count instructions via llvm-objdump disassembly."""
@@ -163,10 +155,6 @@ def collect_metrics(name, arch, opt_level, binary_path, asm_path):
     return m
 
 
-# ---------------------------------------------------------------------------
-# Build and run
-# ---------------------------------------------------------------------------
-
 def get_sdk_path():
     """Cache the macOS SDK path."""
     if not hasattr(get_sdk_path, "_cached"):
@@ -223,10 +211,6 @@ def check_correctness(binary_path, name):
     code = run_retcode(str(binary_path))
     return "PASS" if code == expected else f"FAIL({code})"
 
-
-# ---------------------------------------------------------------------------
-# Output formatting
-# ---------------------------------------------------------------------------
 
 def print_table(all_results):
     """Print a formatted comparison table grouped by benchmark."""
@@ -305,11 +289,6 @@ def write_json(all_results, json_path):
     with open(json_path, "w") as f:
         json.dump([asdict(m) for m in all_results], f, indent=2)
     print(f"  JSON -> {json_path}")
-
-
-# ---------------------------------------------------------------------------
-# Main
-# ---------------------------------------------------------------------------
 
 def main():
     parser = argparse.ArgumentParser(

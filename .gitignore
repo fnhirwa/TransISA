@@ -41,7 +41,6 @@ _deps/
 # LLVM generated files
 *.ll
 *.bc
-*.s
 
 # docs
 docs/html/
