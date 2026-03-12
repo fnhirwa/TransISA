@@ -47,6 +47,7 @@ class LLVMIRGen {
       std::unordered_map<std::string, llvm::Value*>>
       calleeContext;
   std::unordered_map<std::string, std::string> RegisterAlias = {
+      // 8-bit sub-registers
       {"al", "eax"},
       {"ah", "eax"},
       {"bl", "ebx"},
@@ -55,6 +56,15 @@ class LLVMIRGen {
       {"ch", "ecx"},
       {"dl", "edx"},
       {"dh", "edx"},
+      // 64-bit registers → canonical 32-bit names used throughout IR gen
+      {"rax", "eax"},
+      {"rbx", "ebx"},
+      {"rcx", "ecx"},
+      {"rdx", "edx"},
+      {"rdi", "edi"},
+      {"rsi", "esi"},
+      {"rsp", "esp"},
+      {"rbp", "ebp"},
   };
 
   std::unordered_map<std::string, llvm::Function*> definedFunctionsMap;

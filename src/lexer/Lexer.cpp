@@ -533,6 +533,13 @@ std::string Lexer::convertMemoryOperand(const std::string& op) {
   std::string result = "[";
   if (!parts.empty())
     result += parts[0]; // base
+
+  // RIP-relative: symbol(%rip) — the displacement is the symbol, base is rip.
+  // Emit [symbol] so the parser sees a normal global memory reference.
+  if (parts.size() == 1 && parts[0] == "rip") {
+    return "[" + disp + "]";
+  }
+
   if (parts.size() >= 2 && !parts[1].empty()) {
     result += "+" + parts[1]; // index
     if (parts.size() >= 3 && !parts[2].empty() && parts[2] != "1")

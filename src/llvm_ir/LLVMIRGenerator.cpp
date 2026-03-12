@@ -150,21 +150,28 @@ llvm::Value* SyscallBuilder::emitGenericSyscall(
   return emitSyscall(builder, context, module, fullArgs, 0, targetABI);
 }
 
+/*=============================================================*/
+/*              Other utility functions*                       */
+/*=============================================================*/
+
 // Loading or getting the register
 llvm::Value* LLVMIRGen::getOrLoadRegister(const std::string& regName) {
-  llvm::Function* currentFunc = builder.GetInsertBlock()->getParent();
-  llvm::Value* regPtr = getNamedValue(regName);
+  // Resolve alias (e.g. rax → eax, rdi → edi) so all widths share one alloca.
+  const std::string resolved =
+      RegisterAlias.count(regName) ? RegisterAlias.at(regName) : regName;
+
+  llvm::Value* regPtr = getNamedValue(resolved);
   if (!regPtr) {
-    std::cerr << "Error: Source register " << regName << " not found "
+    std::cerr << "Error: Source register " << resolved << " not found "
               << "Allocating it.\n";
-    regPtr =
-        builder.CreateAlloca(llvm::Type::getInt32Ty(context), nullptr, regName);
+    regPtr = builder.CreateAlloca(
+        llvm::Type::getInt32Ty(context), nullptr, resolved);
     builder.CreateStore(
         llvm::ConstantInt::get(context, llvm::APInt(32, 0)), regPtr);
-    namedValues[regName] = regPtr;
+    namedValues[resolved] = regPtr;
   }
   return builder.CreateLoad(
-      llvm::Type::getInt32Ty(context), regPtr, regName + "_load");
+      llvm::Type::getInt32Ty(context), regPtr, resolved + "_load");
 }
 
 // Handling memory node
@@ -349,10 +356,6 @@ void LLVMIRGen::restoreStackState(llvm::Function* func) {
   namedValues.erase("rsp_shadow");
   namedValues.erase("rsp_ptr_shadow");
 }
-
-/*===================================================================*/
-/*                    LLVMIRGen class implementation                 */
-/*===================================================================*/
 
 // This module object is used to store all the IR generated
 // It is a container for all the IR instructions
@@ -610,6 +613,9 @@ void LLVMIRGen::visitInstructionNode(InstructionNode* node) {
   } else if (jumpOpTable.find(node->opcode) != jumpOpTable.end()) {
     handleBranchingInstructions(node);
     return;
+  } else if (node->opcode == "syscall") {
+    handleSyscallInstructionNode(node);
+    return;
   } else if (node->opcode == "end") {
     // NASM end-of-file marker — no IR to emit
     return;
@@ -651,7 +657,10 @@ void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
   std::string lhsRegister;
   if (lhsType == "reg") {
     auto* lhsReg = dynamic_cast<RegisterNode*>(lhsNode);
-    lhsRegister = lhsReg->registerName;
+    // Resolve alias so write targets the same alloca as reads
+    lhsRegister = RegisterAlias.count(lhsReg->registerName)
+        ? RegisterAlias.at(lhsReg->registerName)
+        : lhsReg->registerName;
     lhsValue = getOrLoadRegister(lhsRegister);
   } else if (lhsType == "mem" || lhsType == "int") {
     lhsValue = castInputTypes(lhsNode, lhsType);
@@ -759,11 +768,14 @@ void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
   // store the value in a register
   if (destType == "reg") {
     auto* destReg = dynamic_cast<RegisterNode*>(destNode);
-    llvm::Value* destPtr = getNamedValue(destReg->registerName);
+    const std::string destName = RegisterAlias.count(destReg->registerName)
+        ? RegisterAlias.at(destReg->registerName)
+        : destReg->registerName;
+    llvm::Value* destPtr = getNamedValue(destName);
     if (!destPtr || !destPtr->getType()->isPointerTy()) {
       destPtr = builder.CreateAlloca(
-          llvm::Type::getInt32Ty(context), nullptr, destReg->registerName);
-      namedValues[destReg->registerName] = destPtr;
+          llvm::Type::getInt32Ty(context), nullptr, destName);
+      namedValues[destName] = destPtr;
     }
     builder.CreateStore(srcValue, destPtr);
   } else if (destType == "mem") {
@@ -792,6 +804,9 @@ void LLVMIRGen::handleLeaInstructionNode(InstructionNode* node) {
   }
 
   auto* destReg = dynamic_cast<RegisterNode*>(destNode);
+  const std::string destName = RegisterAlias.count(destReg->registerName)
+      ? RegisterAlias.at(destReg->registerName)
+      : destReg->registerName;
   llvm::Value* effectiveAddr = nullptr;
 
   if (check_operandType(srcNode) == "mem") {
@@ -802,18 +817,13 @@ void LLVMIRGen::handleLeaInstructionNode(InstructionNode* node) {
     if (globalVar) {
       effectiveAddr =
           builder.CreateBitCast(globalVar, llvm::PointerType::get(context, 0));
-      // We need to store this address in the destination register
-      // But we need to ensure the destination register is allocated
-      // means exists in namedValues
-      if (!getNamedValue(destReg->registerName)) {
-        // create an alloca for the destination reg if it doesn't exist
+      if (!getNamedValue(destName)) {
         llvm::Type* registerType = llvm::PointerType::get(context, 0);
         llvm::AllocaInst* allocaInst =
-            builder.CreateAlloca(registerType, nullptr, destReg->registerName);
-        namedValues[destReg->registerName] = allocaInst;
+            builder.CreateAlloca(registerType, nullptr, destName);
+        namedValues[destName] = allocaInst;
       }
-      // store the effective address in the destination register
-      llvm::Value* destPtr = getNamedValue(destReg->registerName);
+      llvm::Value* destPtr = getNamedValue(destName);
       builder.CreateStore(effectiveAddr, destPtr);
     } else {
       std::cerr << "Error: Global variable '" << memNode->base
@@ -1045,7 +1055,68 @@ void LLVMIRGen::handleIntInstructionNode(InstructionNode* node) {
   }
 }
 
-void LLVMIRGen::handleSyscallInstructionNode(InstructionNode* node) {}
+void LLVMIRGen::handleSyscallInstructionNode(InstructionNode* node) {
+  // x86-64 syscall ABI: rax=number, rdi=arg1, rsi=arg2, rdx=arg3
+  // After alias resolution these map to: eax, edi, esi, edx
+  //
+  // Helper: load a register alloca as i64.
+  // Handles both i32 allocas (from mov) and pointer allocas (from lea).
+  auto getRegAs64 = [&](const std::string& reg) -> llvm::Value* {
+    llvm::Value* regPtr = getNamedValue(reg);
+    if (!regPtr)
+      return llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
+
+    if (!regPtr->getType()->isPointerTy())
+      return builder.CreateZExtOrTrunc(
+          regPtr, llvm::Type::getInt64Ty(context), reg + "_64");
+
+    // Determine what type is stored in the alloca
+    if (auto* alloca = llvm::dyn_cast<llvm::AllocaInst>(regPtr)) {
+      if (alloca->getAllocatedType()->isPointerTy()) {
+        // Pointer alloca (e.g. set by lea) — load ptr then convert to int
+        llvm::Value* ptr = builder.CreateLoad(
+            alloca->getAllocatedType(), regPtr, reg + "_ptr");
+        return builder.CreatePtrToInt(
+            ptr, llvm::Type::getInt64Ty(context), reg + "_64");
+      }
+    }
+    // Default: integer alloca
+    llvm::Value* val = builder.CreateLoad(
+        llvm::Type::getInt32Ty(context), regPtr, reg + "_val");
+    return builder.CreateZExt(
+        val, llvm::Type::getInt64Ty(context), reg + "_64");
+  };
+
+  llvm::Value* syscallNum = getRegAs64("eax"); // rax → eax via alias
+  llvm::Value* arg1 = getRegAs64("edi"); // rdi → edi
+  llvm::Value* arg2 = getRegAs64("esi"); // rsi → esi
+  llvm::Value* arg3 = getRegAs64("edx"); // rdx → edx
+  llvm::Value* zero =
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0);
+
+  // Pass syscall number as first element so emitSyscall routes it to x16/x8.
+  // The benchmarks already use macOS-prefixed numbers (0x2000001, 0x2000004),
+  // so we bypass convert_x86_to_macos_syscall to avoid double-conversion.
+  std::vector<llvm::Value*> args = {
+      syscallNum, arg1, arg2, arg3, zero, zero, zero};
+
+#if defined(__APPLE__) && defined(__aarch64__)
+  SyscallBuilder::emitSyscall(
+      builder, context, &module, args, 0, TargetABI::MacOS_ARM64);
+#elif defined(__linux__) && defined(__aarch64__)
+  SyscallBuilder::emitSyscall(
+      builder, context, &module, args, 0, TargetABI::Linux_ARM64);
+#endif
+
+  // After an exit syscall the process is gone; mark block as unreachable
+  // so LLVM does not try to branch past the svc instruction.
+  if (auto* constNum = llvm::dyn_cast<llvm::ConstantInt>(syscallNum)) {
+    uint64_t num = constNum->getZExtValue();
+    if (num == 0x2000001 || num == 93 || num == 1) { // macOS/Linux exit
+      builder.CreateUnreachable();
+    }
+  }
+}
 
 void LLVMIRGen::handleRetInstructionNode(InstructionNode* node) {
   if (node->operands.empty()) {
