@@ -50,6 +50,7 @@ llvm_map_components_to_libnames(
   core
   irreader
   mc
+  passes
   scalaropts
   asmparser
   asmprinter

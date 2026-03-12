@@ -50,4 +50,8 @@ docs/html/
 .DS_Store
 
 # becnhmarks
-benchmarking/
+results/
+arm/*.o
+arm/*.out
+x86/*.o
+x86/*.out

@@ -1,16 +1,37 @@
 #include "codegen/Codegen.h"
 
-void Codegen::optimize(llvm::Module& module) {
-  // Create a pass manager
-  llvm::legacy::PassManager passManager;
+void Codegen::optimize(llvm::Module& module, OptLevel level) {
+  if (level == OptLevel::O0) {
+    // No optimization — emit raw lifted IR as-is
+    return;
+  }
 
-  // Add optimization passes
-  passManager.add(llvm::createPromoteMemoryToRegisterPass()); // Example pass
-  passManager.add(llvm::createInstructionCombiningPass()); // Example pass
-  passManager.add(llvm::createDeadCodeEliminationPass()); // Example pass
+  llvm::PassBuilder PB;
+  llvm::LoopAnalysisManager LAM;
+  llvm::FunctionAnalysisManager FAM;
+  llvm::CGSCCAnalysisManager CGAM;
+  llvm::ModuleAnalysisManager MAM;
 
-  // Run the passes
-  passManager.run(module);
+  PB.registerModuleAnalyses(MAM);
+  PB.registerCGSCCAnalyses(CGAM);
+  PB.registerFunctionAnalyses(FAM);
+  PB.registerLoopAnalyses(LAM);
+  PB.crossRegisterProxies(LAM, FAM, CGAM, MAM);
+
+  llvm::OptimizationLevel optLevel;
+  switch (level) {
+    case OptLevel::O1:
+      optLevel = llvm::OptimizationLevel::O1;
+      break;
+    case OptLevel::O2:
+      optLevel = llvm::OptimizationLevel::O2;
+      break;
+    default:
+      return;
+  }
+
+  llvm::ModulePassManager MPM = PB.buildPerModuleDefaultPipeline(optLevel);
+  MPM.run(module, MAM);
 }
 
 std::string detectHostTarget() {

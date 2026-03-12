@@ -1,12 +1,21 @@
 # Set LLVM directory
-if(APPLE)
+if(NOT DEFINED LLVM_DIR AND DEFINED ENV{LLVM_DIR})
+  set(LLVM_DIR
+      "$ENV{LLVM_DIR}"
+      CACHE PATH "Path to LLVM CMake configuration")
+endif()
+
+if(NOT DEFINED LLVM_DIR AND APPLE)
   # macOS - Homebrew installation (Apple Silicon or Intel)
   if(EXISTS "/opt/homebrew/opt/llvm@19/lib/cmake/llvm")
     set(LLVM_DIR "/opt/homebrew/opt/llvm@19/lib/cmake/llvm")
   elseif(EXISTS "/usr/local/opt/llvm@19/lib/cmake/llvm")
     set(LLVM_DIR "/usr/local/opt/llvm@19/lib/cmake/llvm")
   endif()
-elseif(UNIX AND NOT APPLE)
+elseif(
+  NOT DEFINED LLVM_DIR
+  AND UNIX
+  AND NOT APPLE)
   # Linux - Check common installation paths
   if(EXISTS "/usr/lib/llvm-19/lib/cmake/llvm")
     set(LLVM_DIR "/usr/lib/llvm-19/lib/cmake/llvm")
@@ -22,7 +31,7 @@ endif()
 if(NOT DEFINED LLVM_DIR)
   message(
     FATAL_ERROR
-      "LLVM directory not found. Set LLVM_DIR manually or install LLVM properly."
+      "LLVM directory not found. Set LLVM_DIR via CMake preset, -DLLVM_DIR=..., or environment variable LLVM_DIR."
   )
 endif()
 
@@ -69,6 +78,7 @@ llvm_map_components_to_libnames(
   core
   irreader
   mc
+  passes
   scalaropts
   asmparser
   asmprinter

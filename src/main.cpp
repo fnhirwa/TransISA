@@ -1,3 +1,4 @@
+#include <cstring>
 #include <iostream>
 #include <vector>
 #include "codegen/Codegen.h"
@@ -8,87 +9,119 @@
 
 using namespace std;
 
-void testParser(std::string_view source) {
-  Lexer lexer(source);
-  std::vector<Token> tokens = lexer.tokenize();
-  //{TokenType::LABEL, value, "LABEL", line, column};
-  for (const Token& token : tokens) {
-    std::cout << token.value << " " << token.type_name << " " << token.line
-              << " " << token.column << std::endl;
-  }
-  // Parsing to AST
-  Parser parser(tokens);
-  std::unique_ptr<ASTNode> ast = parser.parse();
+struct CliOptions {
+  std::string inputFile;
+  std::string outputFile = "output.s";
+  OptLevel optLevel = OptLevel::O0;
+  bool emitIR = false;
+  bool verbose = false;
+};
 
-  std::cout << "Generated AST:\n";
-  ast->print();
+void printUsage(const char* progName) {
+  std::cerr << "Usage: " << progName << " <input.s> [options]\n"
+            << "Options:\n"
+            << "  -o <file>       Output assembly file (default: output.s)\n"
+            << "  --opt-level=N   Optimization level: 0, 1, 2 (default: 0)\n"
+            << "  --emit-ir       Dump LLVM IR to stderr before codegen\n"
+            << "  --verbose       Print tokens, AST, and pipeline stages\n"
+            << "  --help          Show this message\n";
 }
 
-void testIRGen(std::string_view source) {
-  Lexer lexer(source);
-  std::vector<Token> tokens = lexer.tokenize();
-  for (const Token& token : tokens) {
-    std::cout << token.value << " " << token.type_name << " " << token.line
-              << " " << token.column << std::endl;
-  }
-  Parser parser(tokens);
-  std::unique_ptr<ASTNode> root = parser.parse();
-  std::cout << "Generated AST:\n";
-  root->print();
-  // print the parsed labels
-  std::cout << "Parsed Functions:\n";
-  for (const auto& function : Parser::parserLabelMap) {
-    std::cout << "Function: " << function.first << "\n";
-    std::cout << "  Basic Blocks (" << function.second.size() << "):\n";
-    std::cout << "Associated Labels: ";
-    for (size_t i = 0; i < function.second.size(); ++i) {
-      if (function.second[i] != nullptr) {
-        std::cout << "    [" << i << "] " << function.second[i]->label << "\n";
-        // Add more BasicBlockNode fields if needed
-      } else {
-        std::cout << "    [" << i << "] nullptr\n";
+CliOptions parseArgs(int argc, char* argv[]) {
+  CliOptions opts;
+  for (int i = 1; i < argc; ++i) {
+    std::string arg = argv[i];
+    if (arg == "--help" || arg == "-h") {
+      printUsage(argv[0]);
+      exit(0);
+    } else if (arg == "-o" && i + 1 < argc) {
+      opts.outputFile = argv[++i];
+    } else if (arg.rfind("--opt-level=", 0) == 0) {
+      int level = std::stoi(arg.substr(12));
+      if (level == 0)
+        opts.optLevel = OptLevel::O0;
+      else if (level == 1)
+        opts.optLevel = OptLevel::O1;
+      else if (level == 2)
+        opts.optLevel = OptLevel::O2;
+      else {
+        std::cerr << "Error: invalid optimization level (use 0, 1, or 2)\n";
+        exit(1);
       }
+    } else if (arg == "--emit-ir") {
+      opts.emitIR = true;
+    } else if (arg == "--verbose") {
+      opts.verbose = true;
+    } else if (arg[0] != '-') {
+      opts.inputFile = arg;
+    } else {
+      std::cerr << "Unknown option: " << arg << "\n";
+      printUsage(argv[0]);
+      exit(1);
     }
-    std::cout << "\n";
   }
-  // print the parsed functions
-  std::cout << "Parsed Functions:\n";
-  for (const auto& func : Parser::parserFunctionMap) {
-    std::cout << "Function: " << func.first << "\n";
+  if (opts.inputFile.empty()) {
+    std::cerr << "Error: no input file specified\n";
+    printUsage(argv[0]);
+    exit(1);
   }
-  LLVMIRGen irGen;
-  llvm::Module* module = irGen.generateIR(root);
-  cout << "Generated LLVM IR:\n";
-  module->print(llvm::errs(), nullptr);
-  // if (llvm::verifyModule(*module, &llvm::errs())) {
-  //   std::cerr << "Error: Generated LLVM IR is invalid.\n";
-  //   return;
-  // }
-
-  // assembly generation
-  Codegen codegen;
-  std::string outputFilename = "output.s";
-  std::cout << "Generating assembly...\n";
-  try {
-    codegen.generateAssembly(*module, outputFilename);
-    std::cout << "Assembly code generated in " << outputFilename << "\n";
-  } catch (const std::exception& e) {
-    std::cerr << "Error during assembly generation: " << e.what() << "\n";
-  }
+  return opts;
 }
 
 int main(int argc, char* argv[]) {
-  if (argc != 2) {
-    std::cerr << "Usage: " << argv[0] << " <file-path>" << std::endl;
-    return 1;
-  }
-  std::string filePath = argv[1];
+  CliOptions opts = parseArgs(argc, argv);
+
   std::string bufferStorage;
   try {
-    std::string_view source = readFileToStringView(filePath, bufferStorage);
-    testIRGen(source);
+    std::string_view source =
+        readFileToStringView(opts.inputFile, bufferStorage);
+
+    // Stage 1: Lexical Analysis
+    Lexer lexer(source);
+    std::vector<Token> tokens = lexer.tokenize();
+    if (opts.verbose) {
+      std::cout << "=== Tokens ===\n";
+      for (const Token& token : tokens) {
+        std::cout << token.value << " " << token.type_name << " " << token.line
+                  << " " << token.column << std::endl;
+      }
+    }
+
+    // Stage 2: Parsing to AST
+    Parser parser(tokens);
+    std::unique_ptr<ASTNode> root = parser.parse();
+    if (opts.verbose) {
+      std::cout << "\n=== AST ===\n";
+      root->print();
+    }
+
+    // Stage 3: LLVM IR Generation
+    LLVMIRGen irGen;
+    llvm::Module* module = irGen.generateIR(root);
+
+    if (opts.emitIR) {
+      std::cerr << "\n=== LLVM IR (before optimization) ===\n";
+      module->print(llvm::errs(), nullptr);
+    }
+
+    // Stage 4: Optimization (configurable)
+    Codegen codegen;
+    codegen.optimize(*module, opts.optLevel);
+
+    if (opts.emitIR && opts.optLevel != OptLevel::O0) {
+      std::cerr << "\n=== LLVM IR (after O" << static_cast<int>(opts.optLevel)
+                << ") ===\n";
+      module->print(llvm::errs(), nullptr);
+    }
+
+    // Stage 5: Assembly Generation
+    std::cout << "Generating assembly -> " << opts.outputFile << "\n";
+    codegen.generateAssembly(*module, opts.outputFile);
+    std::cout << "Done.\n";
+
   } catch (const std::exception& e) {
-    std::cerr << e.what() << '\n';
+    std::cerr << "Error: " << e.what() << '\n';
+    return 1;
   }
 
   return 0;
