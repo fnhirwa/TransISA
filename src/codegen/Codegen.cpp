@@ -66,6 +66,15 @@ Codegen::Codegen(const std::string& targetOverride) {
   std::string target =
       targetOverride.empty() ? detectHostTarget() : targetOverride;
   initializeTarget(target);
+  // TransISA is always a cross-compiler: output is always ARM64.
+  // Always make sure the AArch64 backend is initialised regardless of host.
+  if (target != "AArch64") {
+    LLVMInitializeAArch64TargetInfo();
+    LLVMInitializeAArch64Target();
+    LLVMInitializeAArch64TargetMC();
+    LLVMInitializeAArch64AsmParser();
+    LLVMInitializeAArch64AsmPrinter();
+  }
 }
 
 void Codegen::generateAssembly(
@@ -81,8 +90,11 @@ void Codegen::generateAssembly(
     return;
   }
 
-  // Setup target triple
-  std::string targetTriple = llvm::sys::getDefaultTargetTriple();
+  // TransISA always targets Apple Silicon macOS — even when built on a Linux
+  // x86-64 host (e.g. WSL).  The inline asm uses ARM64 instructions (svc
+  // #0x80) which are only valid for an AArch64 target.  Using the host triple
+  // on x86-64 makes LLVM reject them.
+  const std::string targetTriple = "aarch64-apple-macosx11.0.0";
   module.setTargetTriple(targetTriple);
 
   std::string error;
