@@ -48,12 +48,13 @@ docs/html/
 # machine binaries
 .DS_Store
 
-# becnhmarks
-results/
+# benchmarks
 arm/*.o
 arm/*.out
 x86/*.o
 x86/*.out
+results/*.json
+results/*.csvs
 
 # Environments
 .env

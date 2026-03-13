@@ -23,6 +23,8 @@ from pathlib import Path
 from dataclasses import dataclass, field, asdict
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
+DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "arm"
+DEFAULT_RESULTS_DIR = SCRIPT_DIR / "results"
 OPT_LEVELS = [0, 1, 2]
 
 # Expected exit codes for correctness verification.
@@ -298,7 +300,7 @@ def main():
             "Examples:\n"
             "  python3 analyzefiles.py\n"
             "  python3 analyzefiles.py --transisa ../build/src/TransISA\n"
-            "  python3 analyzefiles.py --benchmarks ./x86 --output ./results\n"
+            "  python3 analyzefiles.py --benchmarks ./x86 --output ./arm\n"
         ),
     )
     parser.add_argument(
@@ -313,15 +315,21 @@ def main():
     )
     parser.add_argument(
         "--output", type=str,
-        default=str(SCRIPT_DIR / "results"),
-        help="Output directory for transpiled files and metrics"
+        default=str(DEFAULT_OUTPUT_DIR),
+        help="Output directory for transpiled files and binaries (default: ./arm)"
     )
     args = parser.parse_args()
 
     transisa_bin = Path(args.transisa).resolve()
     bench_dir = Path(args.benchmarks).resolve()
     out_dir = Path(args.output).resolve()
+    metrics_dir = (
+        DEFAULT_RESULTS_DIR.resolve()
+        if out_dir == DEFAULT_OUTPUT_DIR.resolve()
+        else out_dir
+    )
     out_dir.mkdir(parents=True, exist_ok=True)
+    metrics_dir.mkdir(parents=True, exist_ok=True)
 
     if not transisa_bin.exists():
         print(f"Error: TransISA binary not found at {transisa_bin}")
@@ -335,7 +343,8 @@ def main():
 
     print(f"  TransISA:   {transisa_bin}")
     print(f"  Benchmarks: {bench_dir} ({len(asm_files)} programs)")
-    print(f"  Output:     {out_dir}\n")
+    print(f"  Output:     {out_dir}")
+    print(f"  Metrics:    {metrics_dir}\n")
 
     all_results = []
     for asm_file in asm_files:
@@ -369,8 +378,8 @@ def main():
     # Output
     print_table(all_results)
     print_reduction_summary(all_results)
-    write_csv(all_results, out_dir / "metrics.csv")
-    write_json(all_results, out_dir / "metrics.json")
+    write_csv(all_results, metrics_dir / "metrics.csv")
+    write_json(all_results, metrics_dir / "metrics.json")
 
 
 if __name__ == "__main__":
