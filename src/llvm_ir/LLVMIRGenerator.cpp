@@ -55,24 +55,26 @@ llvm::Value* SyscallBuilder::emitSyscall(
   std::string constraints;
 
   if (targetABI == TargetABI::MacOS_ARM64) {
-    // x16 = syscall number, x0-x5 = args
-    // InlineAsm assigns: $0 = x16, $1 = x0, ..., $6 = x5
-    asmString = "mov x16, $0\n"; // syscall number
+    // LLVM inline asm operand numbering with one "=r" output:
+    //   $0        = output register (return value)
+    //   $1        = args[0] = syscall number  → x16
+    //   $2..$(N)  = args[1..N-1]              → x0..x(N-2)
+    asmString = "mov x16, $1\n";
     for (size_t i = 1; i < args.size(); ++i)
-      asmString +=
-          "mov x" + std::to_string(i - 1) + ", $" + std::to_string(i) + "\n";
+      asmString += "mov x" + std::to_string(i - 1) + ", $" +
+          std::to_string(i + 1) + "\n";
     asmString += "svc #0x80\n";
-    asmString += "mov $0, x0"; // return x0
+    asmString += "mov $0, x0";
 
-    constraints = "=r"; // return
+    constraints = "=r";
     for (size_t i = 0; i < args.size(); ++i)
       constraints += ",r";
   } else if (targetABI == TargetABI::Linux_ARM64) {
-    // x8 = syscall number, x0-x5 = args
-    asmString = "mov x8, $0\n";
+    // Same numbering: $0=output, $1=syscallNum→x8, $2=arg1→x0, ...
+    asmString = "mov x8, $1\n";
     for (size_t i = 1; i < args.size(); ++i)
-      asmString +=
-          "mov x" + std::to_string(i - 1) + ", $" + std::to_string(i) + "\n";
+      asmString += "mov x" + std::to_string(i - 1) + ", $" +
+          std::to_string(i + 1) + "\n";
     asmString += "svc #0\n";
     asmString += "mov $0, x0";
 
@@ -155,7 +157,7 @@ llvm::Value* SyscallBuilder::emitGenericSyscall(
 /*=============================================================*/
 
 // Loading or getting the register
-llvm::Value* LLVMIRGen::getOrLoadRegister(const std::string& regName) {
+llvm::Value* LLVMIRGen::getOrCreateRegisterPointer(const std::string& regName) {
   // Resolve alias (e.g. rax → eax, rdi → edi) so all widths share one alloca.
   const std::string resolved =
       RegisterAlias.count(regName) ? RegisterAlias.at(regName) : regName;
@@ -164,12 +166,26 @@ llvm::Value* LLVMIRGen::getOrLoadRegister(const std::string& regName) {
   if (!regPtr) {
     std::cerr << "Error: Source register " << resolved << " not found "
               << "Allocating it.\n";
-    regPtr = builder.CreateAlloca(
-        llvm::Type::getInt32Ty(context), nullptr, resolved);
-    builder.CreateStore(
+    // MUST create allocas in the function entry block. Allocas created in
+    // non-entry blocks are not promoted by mem2reg at O1+, causing the
+    // optimizer to treat loads from uninitialized allocas as UB and eliminate
+    // the entire function body.
+    llvm::Function* func = builder.GetInsertBlock()->getParent();
+    llvm::IRBuilder<> entryB(
+        &func->getEntryBlock(), func->getEntryBlock().getFirstInsertionPt());
+    regPtr =
+        entryB.CreateAlloca(llvm::Type::getInt32Ty(context), nullptr, resolved);
+    entryB.CreateStore(
         llvm::ConstantInt::get(context, llvm::APInt(32, 0)), regPtr);
     namedValues[resolved] = regPtr;
   }
+  return regPtr;
+}
+
+llvm::Value* LLVMIRGen::getOrLoadRegister(const std::string& regName) {
+  llvm::Value* regPtr = getOrCreateRegisterPointer(regName);
+  const std::string resolved =
+      RegisterAlias.count(regName) ? RegisterAlias.at(regName) : regName;
   return builder.CreateLoad(
       llvm::Type::getInt32Ty(context), regPtr, resolved + "_load");
 }
@@ -179,23 +195,94 @@ llvm::Value* LLVMIRGen::getOrLoadMemory(MemoryNode* memNode) {
   llvm::Value* baseAddr = nullptr;
   llvm::Value* offsetVal = nullptr;
   if (!memNode->base.empty()) {
-    // check if it is a predefined global variable
-    // and create it if not found, for some cases you can find
-    // it in the .bss section which defines the uninitialized data section
+    // --- Global variable path ---
+    // The base may name a global variable that either:
+    //   (a) was registered by visitGlobalVariableNode / visitBssNode, or
+    //   (b) was lazily created as i32 0 by a previous getOrLoadMemory call.
+    // In both cases we want to return the global's ADDRESS, not load its value.
+    // The old code did CreateLoad(i32, gv) which loaded the content (0) and
+    // then cast that integer to a pointer via inttoptr → SIGSEGV.
+
+    // First check the LLVM module directly (covers case a).
+    llvm::GlobalVariable* gv = module.getNamedGlobal(memNode->base);
+
+    // Also check globalNamedValues in case it was stored as a GEP ptr (e.g.
+    // visitGlobalVariableNode stores a ConstGEP2_32 there, not the GV itself).
+    if (!gv) {
+      llvm::Value* named = getNamedValue(memNode->base);
+      if (named) {
+        // If it's already a GlobalVariable, use it.
+        gv = llvm::dyn_cast<llvm::GlobalVariable>(named);
+        if (!gv) {
+          // It could be a GEP into a global (from visitGlobalVariableNode).
+          // In that case named is already the correct pointer — return it.
+          if (memNode->offset.empty())
+            return named;
+          int off = 0;
+          try {
+            off = std::stoi(memNode->offset);
+          } catch (...) {
+          }
+          return builder.CreateConstGEP1_32(
+              llvm::Type::getInt8Ty(context), named, off, "gep_off");
+        }
+      }
+    }
+
+    if (gv) {
+      if (memNode->offset.empty())
+        return gv;
+      int off = 0;
+      try {
+        off = std::stoi(memNode->offset);
+      } catch (...) {
+      }
+      return builder.CreateConstGEP1_32(
+          llvm::Type::getInt8Ty(context), gv, off, "gep_off");
+    }
+
+    // --- Register / lazy-global path ---
+    // The base is a register name.  If no alloca exists yet, create a lazy
+    // i32 global so the program at least links (addresses won't be meaningful
+    // unless a real alloca is allocated elsewhere, but this avoids crashes).
     if (!getNamedValue(memNode->base)) {
       std::cerr << "Warning: Base register '" << memNode->base
                 << "' not allocated. Allocating now.\n";
-      // initialize the global variable
-      llvm::GlobalVariable* globalVar = new llvm::GlobalVariable(
+      llvm::GlobalVariable* newGv = new llvm::GlobalVariable(
           module,
           llvm::Type::getInt32Ty(context),
           false,
           llvm::GlobalValue::ExternalLinkage,
           llvm::ConstantInt::get(context, llvm::APInt(32, 0)),
           memNode->base);
-      globalNamedValues[memNode->base] = globalVar; // registered globally
+      globalNamedValues[memNode->base] = newGv;
+      // Return the address of the newly created global directly.
+      if (memNode->offset.empty())
+        return newGv;
+      int off = 0;
+      try {
+        off = std::stoi(memNode->offset);
+      } catch (...) {
+      }
+      return builder.CreateConstGEP1_32(
+          llvm::Type::getInt8Ty(context), newGv, off, "gep_off");
     }
+
     baseAddr = getNamedValue(memNode->base);
+    // If the value stored turned out to be a GlobalVariable after all, return
+    // it.
+    if (auto* existingGv = llvm::dyn_cast<llvm::GlobalVariable>(baseAddr)) {
+      if (memNode->offset.empty())
+        return existingGv;
+      int off = 0;
+      try {
+        off = std::stoi(memNode->offset);
+      } catch (...) {
+      }
+      return builder.CreateConstGEP1_32(
+          llvm::Type::getInt8Ty(context), existingGv, off, "gep_off");
+    }
+
     baseAddr = builder.CreateLoad(
         llvm::Type::getInt32Ty(context), baseAddr, memNode->base);
   }
@@ -477,6 +564,10 @@ void LLVMIRGen::visitFunctionNode(FunctionNode* node) {
     // initialize function stack
     if (!rspIntPerFunction.count(function)) {
       initializeFunctionStack(function);
+      // Snapshot stack state so push/pop work even in functions (like _start)
+      // that never call another function and therefore never hit the call-site
+      // snapshot in handleCallInstructionNode.
+      snapshotStackState(function);
     }
   }
 
@@ -551,11 +642,24 @@ void LLVMIRGen::visitBasicBlockNode(
   for (const auto& instr : node->instructions) {
     visitInstructionNode(dynamic_cast<InstructionNode*>(instr.get()));
   }
-  if (!bb->getTerminator()) {
+
+  // After instruction emission the builder may be pointing at a dynamically
+  // created block (e.g. branch_fallback) that is NOT 'bb'. Terminate both.
+  llvm::BasicBlock* currentBB = builder.GetInsertBlock();
+  if (!currentBB->getTerminator()) {
     if (auto next = inferNextBlock(bb, orderedBlocks)) {
       builder.CreateBr(next);
     } else {
-      builder.CreateRetVoid(); // Final block
+      builder.CreateRetVoid();
+    }
+  }
+  // Also close the named block if it's different and still open.
+  if (bb != currentBB && !bb->getTerminator()) {
+    llvm::IRBuilder<> tmpB(bb);
+    if (auto next = inferNextBlock(bb, orderedBlocks)) {
+      tmpB.CreateBr(next);
+    } else {
+      tmpB.CreateRetVoid();
     }
   }
 }
@@ -615,6 +719,11 @@ void LLVMIRGen::visitInstructionNode(InstructionNode* node) {
     return;
   } else if (node->opcode == "syscall") {
     handleSyscallInstructionNode(node);
+    return;
+  } else if (
+      node->opcode == "loop" || node->opcode == "loope" ||
+      node->opcode == "loopne") {
+    handleLoopInstructionNode(node);
     return;
   } else if (node->opcode == "end") {
     // NASM end-of-file marker — no IR to emit
@@ -699,7 +808,10 @@ void LLVMIRGen::handleBinaryOpNode(InstructionNode* node) {
   if (lhsType == "reg") {
     llvm::Value* destPtr = getNamedValue(lhsRegister);
     if (!destPtr || !destPtr->getType()->isPointerTy()) {
-      destPtr = builder.CreateAlloca(
+      llvm::Function* func = builder.GetInsertBlock()->getParent();
+      llvm::IRBuilder<> entryB(
+          &func->getEntryBlock(), func->getEntryBlock().getFirstInsertionPt());
+      destPtr = entryB.CreateAlloca(
           llvm::Type::getInt32Ty(context), nullptr, lhsRegister);
       namedValues[lhsRegister] = destPtr;
     }
@@ -773,7 +885,11 @@ void LLVMIRGen::handleMovInstructionNode(InstructionNode* node) {
         : destReg->registerName;
     llvm::Value* destPtr = getNamedValue(destName);
     if (!destPtr || !destPtr->getType()->isPointerTy()) {
-      destPtr = builder.CreateAlloca(
+      // Alloca must be in the entry block for mem2reg to promote it at O1+.
+      llvm::Function* func = builder.GetInsertBlock()->getParent();
+      llvm::IRBuilder<> entryB(
+          &func->getEntryBlock(), func->getEntryBlock().getFirstInsertionPt());
+      destPtr = entryB.CreateAlloca(
           llvm::Type::getInt32Ty(context), nullptr, destName);
       namedValues[destName] = destPtr;
     }
@@ -1100,13 +1216,7 @@ void LLVMIRGen::handleSyscallInstructionNode(InstructionNode* node) {
   std::vector<llvm::Value*> args = {
       syscallNum, arg1, arg2, arg3, zero, zero, zero};
 
-#if defined(__APPLE__) && defined(__aarch64__)
-  SyscallBuilder::emitSyscall(
-      builder, context, &module, args, 0, TargetABI::MacOS_ARM64);
-#elif defined(__linux__) && defined(__aarch64__)
-  SyscallBuilder::emitSyscall(
-      builder, context, &module, args, 0, TargetABI::Linux_ARM64);
-#endif
+  SyscallBuilder::emitSyscall(builder, context, &module, args, 0, targetABI_);
 
   // After an exit syscall the process is gone; mark block as unreachable
   // so LLVM does not try to branch past the svc instruction.
@@ -1210,6 +1320,10 @@ void LLVMIRGen::handleCompareInstructionNode(InstructionNode* node) {
         builder.CreateICmpULT(lhsValue, rhsValue, "carryFlag");
 
     // Update Overflow Flag (OF)
+    // x86 subtraction overflow: OF = (sign_a != sign_b) AND (sign_result !=
+    // sign_a) i.e. operands had different signs AND the result sign differs
+    // from the first operand. Using XOR for inequality checks, then AND to
+    // require both conditions.
     llvm::Value* lhsSign = builder.CreateICmpSLT(
         lhsValue, llvm::ConstantInt::get(lhsValue->getType(), 0));
     llvm::Value* rhsSign = builder.CreateICmpSLT(
@@ -1217,8 +1331,12 @@ void LLVMIRGen::handleCompareInstructionNode(InstructionNode* node) {
     llvm::Value* resultSign = builder.CreateICmpSLT(
         result, llvm::ConstantInt::get(result->getType(), 0));
 
-    ContextCPUState.overflowFlag = builder.CreateXor(
-        builder.CreateXor(lhsSign, rhsSign), resultSign, "overflowFlag");
+    // signsDiffer = lhsSign XOR rhsSign
+    llvm::Value* signsDiffer = builder.CreateXor(lhsSign, rhsSign);
+    // resultDiffersFromLhs = resultSign XOR lhsSign
+    llvm::Value* resultDiffersFromLhs = builder.CreateXor(resultSign, lhsSign);
+    ContextCPUState.overflowFlag =
+        builder.CreateAnd(signsDiffer, resultDiffersFromLhs, "overflowFlag");
   } else if (node->opcode == "test") {
     llvm::Value* result = builder.CreateAnd(lhsValue, rhsValue, "test_tmp");
 
@@ -1457,7 +1575,53 @@ void LLVMIRGen::handleDivInstructionNode(InstructionNode* node) {
   builder.CreateStore(r32, edxPtr);
 }
 
-void LLVMIRGen::handleLoopInstructionNode(InstructionNode* node) {}
+void LLVMIRGen::handleLoopInstructionNode(InstructionNode* node) {
+  // x86 LOOP: decrement ECX; if ECX != 0, jump to target label.
+  if (node->operands.size() != 1) {
+    std::cerr << "Error: 'loop' requires exactly one label operand\n";
+    return;
+  }
+  auto* labelNode = dynamic_cast<MemoryNode*>(node->operands[0].get());
+  if (!labelNode) {
+    std::cerr << "Error: Invalid label type for 'loop'\n";
+    return;
+  }
+  std::string targetLabel = entryBlockNames[labelNode->base];
+  if (labelMap.find(targetLabel) == labelMap.end()) {
+    std::cerr << "Error: 'loop' target '" << targetLabel << "' not found\n";
+    return;
+  }
+
+  // Decrement ECX (alias of RCX).
+  llvm::Value* ecxPtr = getNamedValue("ecx");
+  if (!ecxPtr) {
+    llvm::Function* func = builder.GetInsertBlock()->getParent();
+    llvm::IRBuilder<> entryB(
+        &func->getEntryBlock(), func->getEntryBlock().getFirstInsertionPt());
+    ecxPtr =
+        entryB.CreateAlloca(llvm::Type::getInt32Ty(context), nullptr, "ecx");
+    entryB.CreateStore(
+        llvm::ConstantInt::get(context, llvm::APInt(32, 0)), ecxPtr);
+    namedValues["ecx"] = ecxPtr;
+  }
+  llvm::Value* ecxVal =
+      builder.CreateLoad(llvm::Type::getInt32Ty(context), ecxPtr, "ecx_load");
+  llvm::Value* decremented = builder.CreateSub(
+      ecxVal, llvm::ConstantInt::get(context, llvm::APInt(32, 1)), "ecx_dec");
+  builder.CreateStore(decremented, ecxPtr);
+
+  // Branch to target if ECX != 0.
+  llvm::Value* notZero = builder.CreateICmpNE(
+      decremented,
+      llvm::ConstantInt::get(context, llvm::APInt(32, 0)),
+      "loop_cond");
+  llvm::Function* currentFunc = builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock* loopTarget = labelMap[targetLabel];
+  llvm::BasicBlock* fallThrough =
+      llvm::BasicBlock::Create(context, "loop_exit", currentFunc);
+  builder.CreateCondBr(notZero, loopTarget, fallThrough);
+  builder.SetInsertPoint(fallThrough);
+}
 
 void LLVMIRGen::initializeFunctionStack(llvm::Function* func) {
   if (rspIntPerFunction.count(func))
@@ -1493,31 +1657,34 @@ void LLVMIRGen::initializeFunctionStack(llvm::Function* func) {
 
 void LLVMIRGen::handleStackOperationInstructionNode(InstructionNode* node) {
   llvm::Function* currentFunc = builder.GetInsertBlock()->getParent();
+  if (!currentFunc) {
+    std::cerr << "Error: No parent function for stack operation\n";
+    return;
+  }
 
   llvm::Value* rsp = getNamedValue("rsp_shadow");
   llvm::Value* rspPtr = getNamedValue("rsp_ptr_shadow");
 
+  if (!rsp && rspIntPerFunction.count(currentFunc)) {
+    rsp = rspIntPerFunction[currentFunc];
+  }
+  if (!rspPtr && rspPtrPerFunction.count(currentFunc)) {
+    rspPtr = rspPtrPerFunction[currentFunc];
+  }
+
   if (!rsp || !rspPtr) {
-    std::cerr
-        << "Error: No stack snapshot (rsp_shadow) found in callee context\n";
+    std::cerr << "Error: No stack state available for current function\n";
     return;
   }
 
-  llvm::Function* callerFunc = nullptr;
-  for (const auto& [func, ctx] : calleeContext) {
-    if (func == currentFunc) {
-      callerFunc = builder.GetInsertBlock()->getParent();
-      break;
-    }
-  }
-
-  if (!callerFunc || !stackMemIntPerFunction.count(callerFunc)) {
-    std::cerr << "Error: No stack memory snapshot found for callee\n";
+  if (!stackMemIntPerFunction.count(currentFunc) ||
+      !stackMemPtrPerFunction.count(currentFunc)) {
+    std::cerr << "Error: No stack memory allocated for current function\n";
     return;
   }
 
-  auto& stackInt = stackMemIntPerFunction[callerFunc];
-  auto& stackPtr = stackMemPtrPerFunction[callerFunc];
+  auto& stackInt = stackMemIntPerFunction[currentFunc];
+  auto& stackPtr = stackMemPtrPerFunction[currentFunc];
 
   const std::string& opcode = node->opcode;
 
@@ -1562,7 +1729,7 @@ void LLVMIRGen::handleStackOperationInstructionNode(InstructionNode* node) {
 
     if (destType == "reg") {
       auto* regNode = dynamic_cast<RegisterNode*>(destNode);
-      llvm::Value* regPtr = getOrLoadRegister(regNode->registerName);
+      llvm::Value* regPtr = getOrCreateRegisterPointer(regNode->registerName);
       builder.CreateStore(val, regPtr);
     } else if (destType == "mem") {
       auto* memNode = dynamic_cast<MemoryNode*>(destNode);
@@ -1594,18 +1761,26 @@ void LLVMIRGen::handleUnaryInstructionNode(
 
   if (operandType == "reg") {
     auto* regNode = dynamic_cast<RegisterNode*>(operandNode);
-    operandPtr = getNamedValue(regNode->registerName);
+    // Resolve alias (e.g. rcx → ecx) so we operate on the canonical alloca.
+    std::string regName = regNode->registerName;
+    auto aliasIt = RegisterAlias.find(regName);
+    if (aliasIt != RegisterAlias.end())
+      regName = aliasIt->second;
+
+    operandPtr = getNamedValue(regName);
 
     if (!operandPtr || !operandPtr->getType()->isPointerTy()) {
-      operandPtr = builder.CreateAlloca(
-          llvm::Type::getInt32Ty(context), nullptr, regNode->registerName);
-      namedValues[regNode->registerName] = operandPtr;
+      // Create alloca in the entry block so mem2reg can promote it.
+      llvm::Function* func = builder.GetInsertBlock()->getParent();
+      llvm::IRBuilder<> entryB(
+          &func->getEntryBlock(), func->getEntryBlock().getFirstInsertionPt());
+      operandPtr = entryB.CreateAlloca(
+          llvm::Type::getInt32Ty(context), nullptr, regName);
+      namedValues[regName] = operandPtr;
     }
 
     value = builder.CreateLoad(
-        llvm::Type::getInt32Ty(context),
-        operandPtr,
-        regNode->registerName + "_load");
+        llvm::Type::getInt32Ty(context), operandPtr, regName + "_load");
 
   } else if (operandType == "mem") {
     auto* memNode = dynamic_cast<MemoryNode*>(operandNode);

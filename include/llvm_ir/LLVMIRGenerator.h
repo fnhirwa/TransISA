@@ -25,11 +25,23 @@ struct TrackCPUState {
         overflowFlag(nullptr) {}
 };
 
+// Must be declared before LLVMIRGen so it can be used as a member.
+enum class TargetABI {
+  MacOS_ARM64,
+  Linux_ARM64,
+  Linux_X86_64,
+};
+
 class LLVMIRGen {
  private:
   llvm::LLVMContext context;
   llvm::Module module;
   llvm::IRBuilder<> builder;
+  // Target ABI used for all syscall emission — set once before IR generation.
+  // Defaults to MacOS_ARM64 because the benchmarks use macOS syscall numbers
+  // and this transpiler cross-compiles on a Linux x86-64 host for Apple
+  // Silicon.
+  TargetABI targetABI_ = TargetABI::MacOS_ARM64;
   // tracking named values
   // for example, eax, ebx, ecx, edx for the context of the current function
   // and the current basic block
@@ -186,6 +198,7 @@ class LLVMIRGen {
   void initializeFunctionStack(llvm::Function* function);
 
   // some memory related functions
+  llvm::Value* getOrCreateRegisterPointer(const std::string& regName);
   llvm::Value* getOrLoadMemory(MemoryNode* memNode);
   llvm::Value* getOrLoadRegister(const std::string& regName);
   llvm::Value* castInputTypes(ASTNode* inputNode, const std::string nodeType);
@@ -214,11 +227,6 @@ class LLVMIRGen {
   }
 };
 
-enum class TargetABI {
-  MacOS_ARM64,
-  Linux_ARM64,
-  Linux_X86_64,
-};
 class SyscallBuilder {
  public:
   static llvm::Value* emitSyscall(

@@ -258,6 +258,20 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
         }
       }
 
+      // A branch/jump whose operand is a keyword like 'loop' gets tokenised as
+      // INSTRUCTION, stopping the while loop before it can be consumed.
+      // Detect this and consume it as a label-reference MemoryNode.
+      static const std::unordered_set<std::string> branchOpcodes = {
+          "jmp", "je", "jne", "jz",   "jnz",   "jg",    "jge", "jl",
+          "jle", "ja", "jae", "jb",   "jbe",   "jc",    "jnc", "jo",
+          "jno", "js", "jns", "loop", "loope", "loopne"};
+      if (operands.empty() && branchOpcodes.count(opcode) &&
+          peek().type == TokenType::INSTRUCTION) {
+        Token labelTok = consume();
+        operands.push_back(
+            std::make_unique<MemoryNode>(labelTok.value, "", false));
+      }
+
       auto instr =
           std::make_unique<InstructionNode>(opcode, std::move(operands));
       currentBasicBlock->addBasicBlock(std::move(instr));
