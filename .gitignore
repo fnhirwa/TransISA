@@ -49,12 +49,10 @@ docs/html/
 .DS_Store
 
 # benchmarks
-arm/*.o
-arm/*.out
+arm/
 x86/*.o
 x86/*.out
-results/*.json
-results/*.csvs
+results/
 
 # Environments
 .env
