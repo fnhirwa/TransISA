@@ -106,7 +106,7 @@ TEST(IRGenTest, CreateAndWriteTempFile) {
   ASSERT_TRUE(module != nullptr) << "LLVM Module is null";
 }
 
-TEST(Gap1OpsIRGen, Not_RegisterOperand) {
+TEST(LibraryIRGen, Not_RegisterOperand) {
   const std::string src = R"(
 SECTION .text
 global _start
@@ -124,7 +124,7 @@ _start:
       << ir;
 }
 
-TEST(Gap1OpsIRGen, Imul_TwoOperand) {
+TEST(LibraryIRGen, Imul_TwoOperand) {
   const std::string src = R"(
 SECTION .text
 global _start
@@ -142,7 +142,7 @@ _start:
                                                    << ir;
 }
 
-TEST(Gap1OpsIRGen, Imul_ThreeOperand) {
+TEST(LibraryIRGen, Imul_ThreeOperand) {
   const std::string src = R"(
 SECTION .text
 global _start
@@ -159,7 +159,7 @@ _start:
                                                    << ir;
 }
 
-TEST(Gap1OpsIRGen, Cdq_SignExtends_EAX_Into_EDX) {
+TEST(LibraryIRGen, Cdq_SignExtends_EAX_Into_EDX) {
   const std::string src = R"(
 SECTION .text
 global _start
@@ -177,7 +177,7 @@ _start:
       << ir;
 }
 
-TEST(Gap1OpsIRGen, Idiv_SignedDivision) {
+TEST(LibraryIRGen, Idiv_SignedDivision) {
   const std::string src = R"(
 SECTION .text
 global _start
@@ -200,7 +200,7 @@ _start:
       << ir;
 }
 
-TEST(Gap1OpsIRGen, Idiv_NegativeDividend) {
+TEST(LibraryIRGen, Idiv_NegativeDividend) {
   const std::string src = R"(
 SECTION .text
 global _start
@@ -221,7 +221,7 @@ _start:
       << ir;
 }
 
-TEST(Gap1OpsIRGen, Movsx_SignExtend) {
+TEST(LibraryIRGen, Movsx_SignExtend) {
   const std::string src = R"(
 SECTION .text
 global _start
@@ -239,7 +239,7 @@ _start:
       << ir;
 }
 
-TEST(Gap1OpsIRGen, Movzx_ZeroExtend) {
+TEST(LibraryIRGen, Movzx_ZeroExtend) {
   const std::string src = R"(
 SECTION .text
 global _start
@@ -257,7 +257,7 @@ _start:
       << ir;
 }
 
-TEST(Gap1OpsIRGen, Xchg_SwapRegisters) {
+TEST(LibraryIRGen, Xchg_SwapRegisters) {
   const std::string src = R"(
 SECTION .text
 global _start
@@ -281,7 +281,7 @@ _start:
                             << ir;
 }
 
-TEST(Gap1OpsIRGen, Xchg_RegisterAndMemory) {
+TEST(LibraryIRGen, Xchg_RegisterAndMemory) {
   const std::string src = R"(
 SECTION .text
 global _start
@@ -296,7 +296,7 @@ _start:
   EXPECT_FALSE(dumpIR(mod).empty());
 }
 
-TEST(Gap1OpsIRGen, Not_MemoryOperand) {
+TEST(LibraryIRGen, Not_MemoryOperand) {
   const std::string src = R"(
 SECTION .text
 global _start

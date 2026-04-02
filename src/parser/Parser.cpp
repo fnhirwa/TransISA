@@ -5,8 +5,14 @@
 Parser::Parser(std::vector<Token> tokens)
     : tokens(std::move(tokens)), index(0) {}
 
+static std::unordered_set<std::string>
+    calledFunctions; // Track called functions within a single parse run
+
 // Peek at the current token without consuming
 Token Parser::peek() {
+  if (tokens.empty()) {
+    return Token{TokenType::END, "END", "END", 1, 0};
+  }
   return (index < tokens.size()) ? tokens[index]
                                  : Token{
                                        TokenType::END,
@@ -18,6 +24,9 @@ Token Parser::peek() {
 
 // Consume the current token and advance
 Token Parser::consume() {
+  if (tokens.empty()) {
+    return Token{TokenType::END, "END", "END", 1, 0};
+  }
   return (index < tokens.size()) ? tokens[index++]
                                  : Token{
                                        TokenType::END,
@@ -33,6 +42,12 @@ std::unordered_map<std::string, FunctionNode*> Parser::parserFunctionMap;
 
 // Entry point for parsing
 std::unique_ptr<RootNode> Parser::parse() {
+  // Parser keeps cross-reference maps as static members; reset them per parse
+  // so AST pointers from previous runs do not dangle into this run.
+  parserLabelMap.clear();
+  parserFunctionMap.clear();
+  calledFunctions.clear();
+
   auto root = std::make_unique<RootNode>();
   bool inTextSection = false;
 
@@ -162,9 +177,6 @@ void Parser::parseBssSection(std::unique_ptr<RootNode>& root) {
     }
   }
 }
-
-static std::unordered_set<std::string>
-    calledFunctions; // Track called functions
 
 void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
   std::unique_ptr<FunctionNode> currentFunction = nullptr;
