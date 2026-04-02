@@ -166,7 +166,10 @@ class LLVMIRGen {
   TrackCPUState ContextCPUState;
 
  public:
-  LLVMIRGen() : module("TransISA", context), builder(context) {}
+  /// Construct with an explicit target ABI (default: macOS ARM64).
+  /// The ABI controls syscall number conventions and inline asm sequences.
+  explicit LLVMIRGen(TargetABI abi = TargetABI::MacOS_ARM64)
+      : module("TransISA", context), builder(context), targetABI_(abi) {}
   llvm::Module* generateIR(std::unique_ptr<ASTNode>& root);
   llvm::Module* getModule() {
     return &module;

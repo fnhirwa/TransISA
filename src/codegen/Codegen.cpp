@@ -1,5 +1,26 @@
 #include "codegen/Codegen.h"
 
+// Static TargetConfig definitions
+const TargetConfig TargetConfig::MACOS_ARM64 = {
+    "macos-arm64",
+    "aarch64-apple-macosx11.0.0",
+    "AArch64",
+    TargetABI::MacOS_ARM64,
+};
+const TargetConfig TargetConfig::LINUX_ARM64 = {
+    "linux-arm64",
+    "aarch64-unknown-linux-gnu",
+    "AArch64",
+    TargetABI::Linux_ARM64,
+};
+const TargetConfig TargetConfig::LINUX_X86_64 = {
+    "linux-x86_64",
+    "x86_64-unknown-linux-gnu",
+    "X86",
+    TargetABI::Linux_X86_64,
+};
+
+// initializeTarget — register LLVM backend components for a given family.
 void Codegen::optimize(llvm::Module& module, OptLevel level) {
   if (level == OptLevel::O0) {
     // No optimization — emit raw lifted IR as-is
@@ -62,19 +83,26 @@ void initializeTarget(const std::string& target) {
   }
 }
 
-Codegen::Codegen(const std::string& targetOverride) {
-  std::string target =
-      targetOverride.empty() ? detectHostTarget() : targetOverride;
-  initializeTarget(target);
-  // TransISA is always a cross-compiler: output is always ARM64.
-  // Always make sure the AArch64 backend is initialised regardless of host.
-  if (target != "AArch64") {
-    LLVMInitializeAArch64TargetInfo();
-    LLVMInitializeAArch64Target();
-    LLVMInitializeAArch64TargetMC();
-    LLVMInitializeAArch64AsmParser();
-    LLVMInitializeAArch64AsmPrinter();
+// Codegen constructor
+Codegen::Codegen(const TargetConfig& config) : config_(config) {
+  // Always initialize the AArch64 backend — TransISA cross-compiles to ARM64
+  // regardless of the host, so we need it available even on x86-64 Linux.
+  LLVMInitializeAArch64TargetInfo();
+  LLVMInitializeAArch64Target();
+  LLVMInitializeAArch64TargetMC();
+  LLVMInitializeAArch64AsmParser();
+  LLVMInitializeAArch64AsmPrinter();
+
+  // Additionally initialize the target's own backend if it differs from AArch64
+  // (needed for future x86 or RISC-V host-native targets).
+  if (config_.backend == "X86") {
+    LLVMInitializeX86TargetInfo();
+    LLVMInitializeX86Target();
+    LLVMInitializeX86TargetMC();
+    LLVMInitializeX86AsmParser();
+    LLVMInitializeX86AsmPrinter();
   }
+  // RISCV: when added, initialize RISC-V backend here.
 }
 
 void Codegen::generateAssembly(
@@ -90,11 +118,10 @@ void Codegen::generateAssembly(
     return;
   }
 
-  // TransISA always targets Apple Silicon macOS — even when built on a Linux
-  // x86-64 host (e.g. WSL).  The inline asm uses ARM64 instructions (svc
-  // #0x80) which are only valid for an AArch64 target.  Using the host triple
-  // on x86-64 makes LLVM reject them.
-  const std::string targetTriple = "aarch64-apple-macosx11.0.0";
+  // Use the target triple from the configuration rather than a hardcoded
+  // string. This is what makes the backend modular: everything downstream —
+  // data layout, instruction selection, ABI — follows from the triple.
+  const std::string& targetTriple = config_.triple;
   module.setTargetTriple(targetTriple);
 
   std::string error;
