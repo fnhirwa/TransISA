@@ -20,7 +20,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, asdict
 
 SCRIPT_DIR = Path(__file__).parent.resolve()
 DEFAULT_OUTPUT_DIR = SCRIPT_DIR / "arm"
@@ -37,6 +37,12 @@ EXPECTED_EXIT_CODES = {
     "max_of_three": 42,
     "nested_loop": 20,
     "gcd": 6,
+    "factorial": 120,
+    "signed_div": 11,
+    "abs_val": 37,
+    "bitwise_not": 15,
+    "swap": 73,
+    "imul3op": 48,
 }
 
 
@@ -57,8 +63,7 @@ def run(cmd, capture=True, timeout=10):
     """Run a shell command and return stdout, or empty string on failure."""
     try:
         r = subprocess.run(
-            cmd, shell=True, capture_output=capture,
-            text=True, timeout=timeout
+            cmd, shell=True, capture_output=capture, text=True, timeout=timeout
         )
         return r.stdout if capture else ""
     except (subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -119,7 +124,8 @@ def count_syscalls(binary_path):
     """Count syscall/svc/int instructions in disassembly."""
     output = run(f"otool -tv {binary_path}")
     return sum(
-        1 for line in output.splitlines()
+        1
+        for line in output.splitlines()
         if any(kw in line for kw in ("svc", "int", "syscall"))
     )
 
@@ -275,11 +281,20 @@ def print_reduction_summary(all_results):
 def write_csv(all_results, csv_path):
     """Write results to a CSV file."""
     with open(csv_path, "w", newline="") as f:
-        writer = csv.DictWriter(f, fieldnames=[
-            "name", "arch", "opt_level", "instruction_count",
-            "text_size_bytes", "binary_size_bytes", "syscall_count",
-            "stack_size_bytes", "correct"
-        ])
+        writer = csv.DictWriter(
+            f,
+            fieldnames=[
+                "name",
+                "arch",
+                "opt_level",
+                "instruction_count",
+                "text_size_bytes",
+                "binary_size_bytes",
+                "syscall_count",
+                "stack_size_bytes",
+                "correct",
+            ],
+        )
         writer.writeheader()
         for m in all_results:
             writer.writerow(asdict(m))
@@ -291,6 +306,7 @@ def write_json(all_results, json_path):
     with open(json_path, "w") as f:
         json.dump([asdict(m) for m in all_results], f, indent=2)
     print(f"  JSON -> {json_path}")
+
 
 def main():
     parser = argparse.ArgumentParser(
@@ -304,19 +320,22 @@ def main():
         ),
     )
     parser.add_argument(
-        "--transisa", type=str,
+        "--transisa",
+        type=str,
         default=str(SCRIPT_DIR.parent / "build" / "src" / "TransISA"),
-        help="Path to TransISA binary (default: ../build/src/TransISA)"
+        help="Path to TransISA binary (default: ../build/src/TransISA)",
     )
     parser.add_argument(
-        "--benchmarks", type=str,
+        "--benchmarks",
+        type=str,
         default=str(SCRIPT_DIR / "x86"),
-        help="Directory containing x86 benchmark .s files"
+        help="Directory containing x86 benchmark .s files",
     )
     parser.add_argument(
-        "--output", type=str,
+        "--output",
+        type=str,
         default=str(DEFAULT_OUTPUT_DIR),
-        help="Output directory for transpiled files and binaries (default: ./arm)"
+        help="Output directory for transpiled files and binaries (default: ./arm)",
     )
     args = parser.parse_args()
 

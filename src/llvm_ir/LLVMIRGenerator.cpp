@@ -2086,4 +2086,13 @@ void LLVMIRGen::handleUnaryInstructionNode(
   }
 
   builder.CreateStore(result, operandPtr);
+  // inc/dec modify ZF, SF, OF (not CF — same as x86 semantics).
+  if (opType == "inc" || opType == "dec") {
+    ContextCPUState.zeroFlag = builder.CreateICmpEQ(
+        result, llvm::ConstantInt::get(result->getType(), 0), "zeroFlag");
+    ContextCPUState.signFlag = builder.CreateICmpSLT(
+        result, llvm::ConstantInt::get(result->getType(), 0), "signFlag");
+    ContextCPUState.overflowFlag = llvm::ConstantInt::getFalse(context);
+    // CF is NOT modified by inc/dec — preserve existing value.
+  }
 }

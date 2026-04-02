@@ -242,10 +242,10 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
               std::make_unique<RegisterNode>(operandToken.value));
         } else if (numberType == "Decimal") {
           operands.push_back(std::make_unique<IntLiteralNode>(
-              std::stoi(operandToken.value, nullptr, 10)));
+              static_cast<int>(std::stol(operandToken.value, nullptr, 10))));
         } else if (numberType == "Hexadecimal") {
           operands.push_back(std::make_unique<IntLiteralNode>(
-              std::stoi(operandToken.value, nullptr, 16)));
+              static_cast<int>(std::stoul(operandToken.value, nullptr, 16))));
         } else if (operandToken.type == TokenType::STRING) {
           operands.push_back(std::make_unique<StringNode>(operandToken.value));
         } else if (operandToken.type == TokenType::COMMA) {

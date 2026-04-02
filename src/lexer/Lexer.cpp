@@ -355,10 +355,11 @@ static const std::unordered_set<std::string> discardablePrefixes = {
 // only strip when the suffix is LAST char and the base is known to be valid.
 // using a simple char check: b/w/l/q/s/d at the end of the mnemonic.
 static const std::unordered_set<std::string> knownMnemonics = {
-    "mov", "add",  "sub",  "imul", "idiv", "and", "or",   "xor", "not", "neg",
-    "cmp", "test", "push", "pop",  "lea",  "ret", "call", "jmp", "je",  "jne",
-    "jl",  "jle",  "jg",   "jge",  "jz",   "jnz", "shl",  "shr", "sar", "sal",
-    "inc", "dec",  "movs", "movz", "cbw",  "cwd", "cdq",  "cqo",
+    "mov", "add", "sub",  "imul", "idiv", "and",   "or",     "xor",  "not",
+    "neg", "cmp", "test", "push", "pop",  "lea",   "ret",    "call", "jmp",
+    "je",  "jne", "jl",   "jle",  "jg",   "jge",   "jz",     "jnz",  "shl",
+    "shr", "sar", "sal",  "inc",  "dec",  "movs",  "movz",   "cbw",  "cwd",
+    "cdq", "cqo", "xchg", "div",  "loop", "loope", "loopne",
 };
 
 // top level entry point for preprocessing
@@ -620,10 +621,13 @@ std::string Lexer::normalizeOperandList(
     // else: label/identifier — leave as-is
   }
 
-  // reverse operand order for AT&T → Intel (src,dst → dst,src)
-  // but only for 2-operand instructions. Single operand (push, pop, jmp,
-  // call, inc, dec, not, neg) keep their order.
-  if (ops.size() == 2) {
+  // Reverse operand order for AT&T → Intel (src,dst → dst,src).
+  // Applies to both 2-op and 3-op instructions:
+  //   2-op: AT&T  src, dst   → Intel dst, src
+  //   3-op: AT&T  imm, src, dst → Intel dst, src, imm  (e.g. imul $8,%rcx,%rax)
+  // Single-operand instructions (push, pop, jmp, call, inc, dec, not, neg)
+  // keep their order.
+  if (ops.size() >= 2) {
     std::reverse(ops.begin(), ops.end());
   }
 
