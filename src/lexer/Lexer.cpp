@@ -18,6 +18,8 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert("mov", TokenType::INSTRUCTION);
   keywordTrie->insert("add", TokenType::INSTRUCTION);
   keywordTrie->insert("sub", TokenType::INSTRUCTION);
+  keywordTrie->insert("imul", TokenType::INSTRUCTION);
+  keywordTrie->insert("idiv", TokenType::INSTRUCTION);
   keywordTrie->insert("mul", TokenType::INSTRUCTION);
   keywordTrie->insert("div", TokenType::INSTRUCTION);
   keywordTrie->insert("mod", TokenType::INSTRUCTION);
@@ -123,12 +125,22 @@ Lexer::Lexer(const std::string_view& source) : source(source) {
   keywordTrie->insert("and", TokenType::INSTRUCTION); // Bitwise AND
   keywordTrie->insert("or", TokenType::INSTRUCTION); // Bitwise OR
   keywordTrie->insert("not", TokenType::INSTRUCTION); // Bitwise NOT
+  keywordTrie->insert("neg", TokenType::INSTRUCTION); // Arithmetic negate
   keywordTrie->insert("shl", TokenType::INSTRUCTION); // Shift left
   keywordTrie->insert("shr", TokenType::INSTRUCTION); // Shift right (logical)
   keywordTrie->insert(
       "sar", TokenType::INSTRUCTION); // Shift right (arithmetic)
   keywordTrie->insert("rol", TokenType::INSTRUCTION); // Rotate left
   keywordTrie->insert("ror", TokenType::INSTRUCTION); // Rotate right
+  keywordTrie->insert(
+      "cdq", TokenType::INSTRUCTION); // Sign-extend eax->edx:eax
+  keywordTrie->insert(
+      "cqo", TokenType::INSTRUCTION); // Sign-extend rax->rdx:rax
+  keywordTrie->insert("movsx", TokenType::INSTRUCTION); // Sign-extend move
+  keywordTrie->insert("movzx", TokenType::INSTRUCTION); // Zero-extend move
+  keywordTrie->insert(
+      "movsxd", TokenType::INSTRUCTION); // Sign-extend dword->qword
+  keywordTrie->insert("xchg", TokenType::INSTRUCTION); // Exchange operands
 
   // Signed comparisons (extended)
   keywordTrie->insert("jo", TokenType::INSTRUCTION); // Jump if overflow

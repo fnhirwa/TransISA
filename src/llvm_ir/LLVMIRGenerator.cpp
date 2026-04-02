@@ -705,6 +705,26 @@ void LLVMIRGen::visitInstructionNode(InstructionNode* node) {
     return;
   } else if (node->opcode == "neg") {
     handleUnaryInstructionNode(node, "neg");
+  } else if (node->opcode == "not") {
+    handleUnaryInstructionNode(node, "not");
+    return;
+  } else if (node->opcode == "imul") {
+    handleImulInstructionNode(node);
+    return;
+  } else if (node->opcode == "idiv") {
+    handleIDivInstructionNode(node);
+    return;
+  } else if (node->opcode == "cdq" || node->opcode == "cqo") {
+    handleCdqInstruction(node);
+    return;
+  } else if (
+      node->opcode == "movsx" || node->opcode == "movzx" ||
+      node->opcode == "movsxd") {
+    handleMovExtendInstructionNode(node);
+    return;
+  } else if (node->opcode == "xchg") {
+    handleXchgInstructionNode(node);
+    return;
   } else if (node->opcode == "push" || node->opcode == "pop") {
     handleStackOperationInstructionNode(node);
     return;
@@ -1510,6 +1530,70 @@ void LLVMIRGen::handleCallInstructionNode(InstructionNode* node) {
   llvm::Value* retVal = getOrLoadRegister("eax");
 }
 
+void LLVMIRGen::handleImulInstructionNode(InstructionNode* node) {
+  // x86 imul forms:
+  //   2-op: imul dst, src        → dst = dst * src  (signed, low 32 bits)
+  //   3-op: imul dst, src, imm   → dst = src * imm  (signed, low 32 bits)
+  //
+  // CreateMul is sign-agnostic for the lower half — correct for both imul and
+  // mul when only the 32-bit result is needed.
+
+  llvm::Value* lhs = nullptr;
+  llvm::Value* rhs = nullptr;
+  std::string destRegName;
+
+  auto resolveReg = [&](const std::string& name) -> std::string {
+    return RegisterAlias.count(name) ? RegisterAlias.at(name) : name;
+  };
+
+  if (node->operands.size() == 2) {
+    // dst = dst * src
+    auto* destReg = dynamic_cast<RegisterNode*>(node->operands[0].get());
+    if (!destReg) {
+      std::cerr << "Error: 'imul' 2-op: destination must be a register\n";
+      return;
+    }
+    destRegName = resolveReg(destReg->registerName);
+    lhs = getOrLoadRegister(destRegName);
+    rhs = castInputTypes(
+        node->operands[1].get(), check_operandType(node->operands[1].get()));
+  } else if (node->operands.size() == 3) {
+    // dst = src * imm
+    auto* destReg = dynamic_cast<RegisterNode*>(node->operands[0].get());
+    if (!destReg) {
+      std::cerr << "Error: 'imul' 3-op: destination must be a register\n";
+      return;
+    }
+    destRegName = resolveReg(destReg->registerName);
+    lhs = castInputTypes(
+        node->operands[1].get(), check_operandType(node->operands[1].get()));
+    rhs = castInputTypes(
+        node->operands[2].get(), check_operandType(node->operands[2].get()));
+  } else {
+    std::cerr << "Error: 'imul' expects 2 or 3 operands, got "
+              << node->operands.size() << "\n";
+    return;
+  }
+
+  if (!lhs || !rhs) {
+    std::cerr << "Error: 'imul' failed to resolve operands\n";
+    return;
+  }
+
+  // Normalise to i32 — keep pointer arithmetic working.
+  if (lhs->getType()->isPointerTy())
+    lhs = builder.CreatePtrToInt(lhs, llvm::Type::getInt32Ty(context), "lhs_i");
+  if (rhs->getType()->isPointerTy())
+    rhs = builder.CreatePtrToInt(rhs, llvm::Type::getInt32Ty(context), "rhs_i");
+  if (lhs->getType() != rhs->getType())
+    rhs = builder.CreateSExtOrTrunc(rhs, lhs->getType(), "imul_cast");
+
+  llvm::Value* result = builder.CreateMul(lhs, rhs, "imultmp");
+
+  llvm::Value* destPtr = getOrCreateRegisterPointer(destRegName);
+  builder.CreateStore(result, destPtr);
+}
+
 void LLVMIRGen::handleDivInstructionNode(InstructionNode* node) {
   if (node->operands.size() != 1) {
     std::cerr << "Error: 'div' expects one operand (the divisor)\n";
@@ -1573,6 +1657,196 @@ void LLVMIRGen::handleDivInstructionNode(InstructionNode* node) {
   llvm::Value* edxPtr = getNamedValue("edx");
   builder.CreateStore(q32, eaxPtr);
   builder.CreateStore(r32, edxPtr);
+}
+
+// ---------------------------------------------------------------------------
+// handleIDivInstructionNode
+// Signed division: EDX:EAX / divisor → EAX = quotient, EDX = remainder.
+// Mirror of handleDivInstructionNode but uses SExt + SDiv/SRem.
+// Typical usage:
+//   cdq          ; sign-extend EAX into EDX
+//   idiv divisor
+// ---------------------------------------------------------------------------
+void LLVMIRGen::handleIDivInstructionNode(InstructionNode* node) {
+  if (node->operands.size() != 1) {
+    std::cerr << "Error: 'idiv' expects one operand (the divisor)\n";
+    return;
+  }
+
+  llvm::Value* divisor = castInputTypes(
+      node->operands[0].get(), check_operandType(node->operands[0].get()));
+  if (!divisor)
+    return;
+
+  if (divisor->getType()->isPointerTy())
+    divisor = builder.CreatePtrToInt(
+        divisor, llvm::Type::getInt32Ty(context), "divisor_int");
+
+  llvm::Value* eaxVal = getOrLoadRegister("eax");
+  llvm::Value* edxVal = getOrLoadRegister("edx");
+
+  // Sign-extend both halves to 64-bit, then assemble EDX:EAX.
+  llvm::Value* edxExt =
+      builder.CreateSExt(edxVal, llvm::Type::getInt64Ty(context), "sext_edx");
+  llvm::Value* edxShifted = builder.CreateShl(
+      edxExt,
+      llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 32),
+      "edx_shifted");
+  llvm::Value* eaxExt =
+      builder.CreateZExt(eaxVal, llvm::Type::getInt64Ty(context), "zext_eax");
+  llvm::Value* dividend = builder.CreateOr(edxShifted, eaxExt, "dividend");
+
+  llvm::Value* divisor64 = builder.CreateSExt(
+      divisor, llvm::Type::getInt64Ty(context), "divisor_sext");
+
+  // Guard against divide-by-zero.
+  llvm::Value* isZero = builder.CreateICmpEQ(
+      divisor64, llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 0));
+  llvm::Function* func = builder.GetInsertBlock()->getParent();
+  llvm::BasicBlock* divOk = llvm::BasicBlock::Create(context, "idiv.ok", func);
+  llvm::BasicBlock* divErr =
+      llvm::BasicBlock::Create(context, "idiv.err", func);
+
+  builder.CreateCondBr(isZero, divErr, divOk);
+
+  builder.SetInsertPoint(divErr);
+  builder.CreateCall(
+      getPrintFunction(),
+      {builder.CreateGlobalStringPtr("Divide by zero error\n")});
+  builder.CreateUnreachable();
+
+  builder.SetInsertPoint(divOk);
+
+  llvm::Value* quotient = builder.CreateSDiv(dividend, divisor64, "quotient");
+  llvm::Value* remainder = builder.CreateSRem(dividend, divisor64, "remainder");
+
+  llvm::Value* q32 =
+      builder.CreateTrunc(quotient, llvm::Type::getInt32Ty(context), "quot32");
+  llvm::Value* r32 =
+      builder.CreateTrunc(remainder, llvm::Type::getInt32Ty(context), "rem32");
+
+  // EAX <- quotient, EDX <- remainder (same layout as unsigned div).
+  llvm::Value* eaxPtr = getOrCreateRegisterPointer("eax");
+  llvm::Value* edxPtr = getOrCreateRegisterPointer("edx");
+  builder.CreateStore(q32, eaxPtr);
+  builder.CreateStore(r32, edxPtr);
+}
+
+// ---------------------------------------------------------------------------
+// handleCdqInstruction  (also handles cqo for 64-bit sign extension)
+// cdq: sign-extends EAX into EDX:EAX.
+//      After cdq: EDX = 0xFFFFFFFF if EAX < 0, else 0x00000000.
+// cqo: sign-extends RAX into RDX:RAX (treated identically in i32 model).
+// ---------------------------------------------------------------------------
+void LLVMIRGen::handleCdqInstruction(InstructionNode* node) {
+  llvm::Value* eaxVal = getOrLoadRegister("eax");
+
+  // Sign-extend 32-bit EAX to 64 bits, then arithmetic-shift right by 32 to
+  // replicate the sign bit across the upper half.
+  llvm::Value* eaxSext =
+      builder.CreateSExt(eaxVal, llvm::Type::getInt64Ty(context), "cdq_sext");
+  llvm::Value* edxNew = builder.CreateTrunc(
+      builder.CreateAShr(
+          eaxSext,
+          llvm::ConstantInt::get(llvm::Type::getInt64Ty(context), 32),
+          "cdq_ashr"),
+      llvm::Type::getInt32Ty(context),
+      "edx_new");
+
+  llvm::Value* edxPtr = getOrCreateRegisterPointer("edx");
+  builder.CreateStore(edxNew, edxPtr);
+}
+
+// ---------------------------------------------------------------------------
+// handleMovExtendInstructionNode  (movsx, movsxd, movzx)
+// movsx  dst, src -- sign-extend src into 32-bit dst.
+// movsxd dst, src -- same; 64-bit operand size variant (treated as i32 here).
+// movzx  dst, src -- zero-extend src into 32-bit dst.
+//
+// Note: the current register model stores everything as i32. When src is
+// already i32, the extend is a no-op. Narrower memory types (i8/i16) will be
+// extended correctly once memory load widths are plumbed in.
+// ---------------------------------------------------------------------------
+void LLVMIRGen::handleMovExtendInstructionNode(InstructionNode* node) {
+  if (node->operands.size() != 2) {
+    std::cerr << "Error: '" << node->opcode << "' expects exactly 2 operands\n";
+    return;
+  }
+
+  auto* destRegNode = dynamic_cast<RegisterNode*>(node->operands[0].get());
+  if (!destRegNode) {
+    std::cerr << "Error: '" << node->opcode
+              << "' destination must be a register\n";
+    return;
+  }
+  std::string destName = destRegNode->registerName;
+  if (RegisterAlias.count(destName))
+    destName = RegisterAlias.at(destName);
+
+  llvm::Value* srcVal = castInputTypes(
+      node->operands[1].get(), check_operandType(node->operands[1].get()));
+  if (!srcVal)
+    return;
+
+  llvm::Type* destTy = llvm::Type::getInt32Ty(context);
+  llvm::Value* result = nullptr;
+
+  if (node->opcode == "movsx" || node->opcode == "movsxd") {
+    result = builder.CreateSExtOrTrunc(srcVal, destTy, "movsx");
+  } else {
+    // movzx
+    result = builder.CreateZExtOrTrunc(srcVal, destTy, "movzx");
+  }
+
+  llvm::Value* destPtr = getOrCreateRegisterPointer(destName);
+  builder.CreateStore(result, destPtr);
+}
+
+// ---------------------------------------------------------------------------
+// handleXchgInstructionNode
+// xchg op1, op2 -- swap two operands.
+// Modelled as two loads + two stores (non-atomic in IR; sufficient for the
+// single-threaded transpilation use-case).
+// ---------------------------------------------------------------------------
+void LLVMIRGen::handleXchgInstructionNode(InstructionNode* node) {
+  if (node->operands.size() != 2) {
+    std::cerr << "Error: 'xchg' expects exactly 2 operands\n";
+    return;
+  }
+
+  std::string lhsType = check_operandType(node->operands[0].get());
+  std::string rhsType = check_operandType(node->operands[1].get());
+
+  // Load both values before any writes.
+  llvm::Value* lhsVal = castInputTypes(node->operands[0].get(), lhsType);
+  llvm::Value* rhsVal = castInputTypes(node->operands[1].get(), rhsType);
+  if (!lhsVal || !rhsVal)
+    return;
+
+  // Helper: writable pointer for a register or memory operand.
+  auto getWritePtr = [&](ASTNode* opNode,
+                         const std::string& opType) -> llvm::Value* {
+    if (opType == "reg") {
+      auto* rn = dynamic_cast<RegisterNode*>(opNode);
+      std::string name = RegisterAlias.count(rn->registerName)
+          ? RegisterAlias.at(rn->registerName)
+          : rn->registerName;
+      return getOrCreateRegisterPointer(name);
+    } else if (opType == "mem") {
+      return getOrLoadMemory(dynamic_cast<MemoryNode*>(opNode));
+    }
+    std::cerr << "Error: 'xchg' operand must be register or memory\n";
+    return nullptr;
+  };
+
+  llvm::Value* lhsPtr = getWritePtr(node->operands[0].get(), lhsType);
+  llvm::Value* rhsPtr = getWritePtr(node->operands[1].get(), rhsType);
+  if (!lhsPtr || !rhsPtr)
+    return;
+
+  // Cross-store: lhs <- old rhs, rhs <- old lhs.
+  builder.CreateStore(rhsVal, lhsPtr);
+  builder.CreateStore(lhsVal, rhsPtr);
 }
 
 void LLVMIRGen::handleLoopInstructionNode(InstructionNode* node) {
@@ -1803,6 +2077,9 @@ void LLVMIRGen::handleUnaryInstructionNode(
         value, llvm::ConstantInt::get(context, llvm::APInt(32, 1)), "dec");
   } else if (opType == "neg") {
     result = builder.CreateNeg(value, "neg");
+  } else if (opType == "not") {
+    // Bitwise NOT — flips every bit (equivalent to XOR with all-ones mask).
+    result = builder.CreateNot(value, "not");
   } else {
     std::cerr << "Error: Unknown unary operation: " << opType << "\n";
     return;

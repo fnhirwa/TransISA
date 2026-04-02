@@ -1,12 +1,43 @@
 #include <gtest/gtest.h>
 #include <cctype>
+#include <fstream>
 #include <iostream>
+#include <string>
 #include "lexer/Lexer.h"
 #include "llvm/Support/raw_ostream.h"
 #include "llvm_ir/LLVMIRGenerator.h"
 #include "parser/Parser.h"
 
 using namespace std;
+
+static llvm::Module* buildModuleFromSource(const std::string& src) {
+  const std::string tmpFile = "gap1_test_tmp.s";
+
+  std::ofstream out(tmpFile);
+  if (!out.is_open())
+    return nullptr;
+  out << src;
+  out.close();
+
+  std::string bufferStorage;
+  std::string_view view = readFileToStringView(tmpFile, bufferStorage);
+
+  Lexer lexer(view);
+  std::vector<Token> tokens = lexer.tokenize();
+
+  Parser parser(tokens);
+  std::unique_ptr<ASTNode> ast = parser.parse();
+
+  static LLVMIRGen irGen;
+  return irGen.generateIR(ast);
+}
+
+static std::string dumpIR(llvm::Module* mod) {
+  std::string ir;
+  llvm::raw_string_ostream rso(ir);
+  mod->print(rso, nullptr);
+  return ir;
+}
 
 TEST(IRGenTest, CreateAndWriteTempFile) {
   string test_example1 =
@@ -73,6 +104,210 @@ TEST(IRGenTest, CreateAndWriteTempFile) {
   llvm::Module* module = irGen.generateIR(ast);
   // check if the llvm module was created
   ASSERT_TRUE(module != nullptr) << "LLVM Module is null";
+}
+
+TEST(Gap1OpsIRGen, Not_RegisterOperand) {
+  const std::string src = R"(
+SECTION .text
+global _start
+_start:
+  mov eax, 7
+  not eax
+  ret
+)";
+  llvm::Module* mod = buildModuleFromSource(src);
+  ASSERT_TRUE(mod != nullptr) << "Module generation failed for 'not'";
+
+  std::string ir = dumpIR(mod);
+  EXPECT_TRUE(ir.find("xor") != std::string::npos)
+      << "Expected 'xor' (CreateNot) in IR:\n"
+      << ir;
+}
+
+TEST(Gap1OpsIRGen, Imul_TwoOperand) {
+  const std::string src = R"(
+SECTION .text
+global _start
+_start:
+  mov eax, 6
+  mov ebx, 7
+  imul eax, ebx
+  ret
+)";
+  llvm::Module* mod = buildModuleFromSource(src);
+  ASSERT_TRUE(mod != nullptr) << "Module generation failed for 'imul' (2-op)";
+
+  std::string ir = dumpIR(mod);
+  EXPECT_TRUE(ir.find("mul") != std::string::npos) << "Expected 'mul' in IR:\n"
+                                                   << ir;
+}
+
+TEST(Gap1OpsIRGen, Imul_ThreeOperand) {
+  const std::string src = R"(
+SECTION .text
+global _start
+_start:
+  mov ecx, 5
+  imul eax, ecx, 4
+  ret
+)";
+  llvm::Module* mod = buildModuleFromSource(src);
+  ASSERT_TRUE(mod != nullptr) << "Module generation failed for 'imul' (3-op)";
+
+  std::string ir = dumpIR(mod);
+  EXPECT_TRUE(ir.find("mul") != std::string::npos) << "Expected 'mul' in IR:\n"
+                                                   << ir;
+}
+
+TEST(Gap1OpsIRGen, Cdq_SignExtends_EAX_Into_EDX) {
+  const std::string src = R"(
+SECTION .text
+global _start
+_start:
+  mov eax, -10
+  cdq
+  ret
+)";
+  llvm::Module* mod = buildModuleFromSource(src);
+  ASSERT_TRUE(mod != nullptr) << "Module generation failed for 'cdq'";
+
+  std::string ir = dumpIR(mod);
+  EXPECT_TRUE(ir.find("ashr") != std::string::npos)
+      << "Expected 'ashr' (sign replication) in IR:\n"
+      << ir;
+}
+
+TEST(Gap1OpsIRGen, Idiv_SignedDivision) {
+  const std::string src = R"(
+SECTION .text
+global _start
+_start:
+  mov eax, 10
+  mov ebx, 3
+  cdq
+  idiv ebx
+  ret
+)";
+  llvm::Module* mod = buildModuleFromSource(src);
+  ASSERT_TRUE(mod != nullptr) << "Module generation failed for 'idiv'";
+
+  std::string ir = dumpIR(mod);
+  EXPECT_TRUE(ir.find("sdiv") != std::string::npos)
+      << "Expected 'sdiv' in IR:\n"
+      << ir;
+  EXPECT_TRUE(ir.find("srem") != std::string::npos)
+      << "Expected 'srem' in IR:\n"
+      << ir;
+}
+
+TEST(Gap1OpsIRGen, Idiv_NegativeDividend) {
+  const std::string src = R"(
+SECTION .text
+global _start
+_start:
+  mov eax, -7
+  mov ecx, 2
+  cdq
+  idiv ecx
+  ret
+)";
+  llvm::Module* mod = buildModuleFromSource(src);
+  ASSERT_TRUE(mod != nullptr)
+      << "Module generation failed for 'idiv' (negative)";
+
+  std::string ir = dumpIR(mod);
+  EXPECT_TRUE(ir.find("sdiv") != std::string::npos)
+      << "Expected 'sdiv' in IR:\n"
+      << ir;
+}
+
+TEST(Gap1OpsIRGen, Movsx_SignExtend) {
+  const std::string src = R"(
+SECTION .text
+global _start
+_start:
+  mov ebx, -1
+  movsx eax, ebx
+  ret
+)";
+  llvm::Module* mod = buildModuleFromSource(src);
+  ASSERT_TRUE(mod != nullptr) << "Module generation failed for 'movsx'";
+
+  std::string ir = dumpIR(mod);
+  EXPECT_TRUE(ir.find("eax") != std::string::npos)
+      << "Expected 'eax' store in IR:\n"
+      << ir;
+}
+
+TEST(Gap1OpsIRGen, Movzx_ZeroExtend) {
+  const std::string src = R"(
+SECTION .text
+global _start
+_start:
+  mov ebx, 255
+  movzx eax, ebx
+  ret
+)";
+  llvm::Module* mod = buildModuleFromSource(src);
+  ASSERT_TRUE(mod != nullptr) << "Module generation failed for 'movzx'";
+
+  std::string ir = dumpIR(mod);
+  EXPECT_TRUE(ir.find("eax") != std::string::npos)
+      << "Expected 'eax' store in IR:\n"
+      << ir;
+}
+
+TEST(Gap1OpsIRGen, Xchg_SwapRegisters) {
+  const std::string src = R"(
+SECTION .text
+global _start
+_start:
+  mov eax, 10
+  mov ebx, 20
+  xchg eax, ebx
+  ret
+)";
+  llvm::Module* mod = buildModuleFromSource(src);
+  ASSERT_TRUE(mod != nullptr) << "Module generation failed for 'xchg'";
+
+  std::string ir = dumpIR(mod);
+  size_t storeCount = 0;
+  size_t pos = 0;
+  while ((pos = ir.find("store", pos)) != std::string::npos) {
+    ++storeCount;
+    ++pos;
+  }
+  EXPECT_GE(storeCount, 2u) << "Expected at least 2 stores for xchg in IR:\n"
+                            << ir;
+}
+
+TEST(Gap1OpsIRGen, Xchg_RegisterAndMemory) {
+  const std::string src = R"(
+SECTION .text
+global _start
+_start:
+  mov eax, 42
+  xchg eax, [ebx]
+  ret
+)";
+  llvm::Module* mod = buildModuleFromSource(src);
+  ASSERT_TRUE(mod != nullptr)
+      << "Module generation failed for 'xchg' (reg/mem)";
+  EXPECT_FALSE(dumpIR(mod).empty());
+}
+
+TEST(Gap1OpsIRGen, Not_MemoryOperand) {
+  const std::string src = R"(
+SECTION .text
+global _start
+_start:
+  mov eax, 0
+  not [eax]
+  ret
+)";
+  llvm::Module* mod = buildModuleFromSource(src);
+  ASSERT_TRUE(mod != nullptr) << "Module generation failed for 'not' (memory)";
+  EXPECT_FALSE(dumpIR(mod).empty());
 }
 
 int main(int argc, char** argv) {

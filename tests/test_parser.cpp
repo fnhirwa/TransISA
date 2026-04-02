@@ -72,6 +72,32 @@ TEST(ParserTest, CreateAndWriteTempFile) {
   ASSERT_TRUE(ast->children.size() > 0) << "AST is empty";
 }
 
+TEST(ParserTest, ParsesAddedOpsProgram) {
+  const std::string src =
+      "SECTION .text\n"
+      "global _start\n"
+      "_start:\n"
+      "  mov eax, 7\n"
+      "  not eax\n"
+      "  imul eax, ebx\n"
+      "  imul eax, ecx, 4\n"
+      "  cdq\n"
+      "  idiv ebx\n"
+      "  movsx eax, ebx\n"
+      "  movzx eax, ebx\n"
+      "  xchg eax, ebx\n"
+      "  ret\n";
+
+  Lexer lexer(src);
+  std::vector<Token> tokens = lexer.tokenize();
+
+  Parser parser(tokens);
+  std::unique_ptr<ASTNode> ast = parser.parse();
+
+  ASSERT_TRUE(ast != nullptr) << "AST is null for added ops program";
+  EXPECT_FALSE(ast->children.empty()) << "AST has no children";
+}
+
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();

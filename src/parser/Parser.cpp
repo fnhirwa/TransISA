@@ -205,6 +205,10 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
           currentFunction->addBasicBlock(std::move(currentBasicBlock));
         }
       }
+      if (!currentFunction) {
+        currentFunction = std::make_unique<FunctionNode>(labelName);
+        parserFunctionMap[labelName] = currentFunction.get();
+      }
       currentBasicBlock = std::make_unique<BasicBlockNode>(labelName);
       parserLabelMap[currentFunction->name].push_back(currentBasicBlock.get());
       consume();
@@ -274,6 +278,15 @@ void Parser::parseTextSection(std::unique_ptr<RootNode>& root) {
 
       auto instr =
           std::make_unique<InstructionNode>(opcode, std::move(operands));
+      if (!currentFunction) {
+        currentFunction = std::make_unique<FunctionNode>("_entry");
+        parserFunctionMap[currentFunction->name] = currentFunction.get();
+      }
+      if (!currentBasicBlock) {
+        currentBasicBlock = std::make_unique<BasicBlockNode>("entry");
+        parserLabelMap[currentFunction->name].push_back(
+            currentBasicBlock.get());
+      }
       currentBasicBlock->addBasicBlock(std::move(instr));
     }
 

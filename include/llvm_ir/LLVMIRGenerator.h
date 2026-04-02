@@ -194,6 +194,11 @@ class LLVMIRGen {
   void handleLoopInstructionNode(InstructionNode* node);
   void handleCallInstructionNode(InstructionNode* node);
   void handleDivInstructionNode(InstructionNode* node);
+  void handleIDivInstructionNode(InstructionNode* node);
+  void handleImulInstructionNode(InstructionNode* node);
+  void handleCdqInstruction(InstructionNode* node);
+  void handleMovExtendInstructionNode(InstructionNode* node);
+  void handleXchgInstructionNode(InstructionNode* node);
   void handleStackOperationInstructionNode(InstructionNode* node);
   void initializeFunctionStack(llvm::Function* function);
 

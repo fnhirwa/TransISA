@@ -237,6 +237,36 @@ TEST(LexerATT, GCCEmittedFunction) {
   }
 }
 
+TEST(LexerIntel, AddedOpsTokenization) {
+  const std::string src =
+      "not eax\n"
+      "imul eax, ebx\n"
+      "imul eax, ecx, 4\n"
+      "cdq\n"
+      "idiv ebx\n"
+      "movsx eax, ebx\n"
+      "movzx eax, ebx\n"
+      "xchg eax, ebx\n";
+
+  auto tokens = tokenizeString(src);
+
+  auto hasInstruction = [&](const std::string& name) {
+    for (const auto& t : tokens) {
+      if (t.type == TokenType::INSTRUCTION && t.value == name)
+        return true;
+    }
+    return false;
+  };
+
+  EXPECT_TRUE(hasInstruction("not"));
+  EXPECT_TRUE(hasInstruction("imul"));
+  EXPECT_TRUE(hasInstruction("cdq"));
+  EXPECT_TRUE(hasInstruction("idiv"));
+  EXPECT_TRUE(hasInstruction("movsx"));
+  EXPECT_TRUE(hasInstruction("movzx"));
+  EXPECT_TRUE(hasInstruction("xchg"));
+}
+
 int main(int argc, char** argv) {
   ::testing::InitGoogleTest(&argc, argv);
   return RUN_ALL_TESTS();
