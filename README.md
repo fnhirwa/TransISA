@@ -8,6 +8,11 @@ x86 Assembly (.s) → Lexer → Parser → AST → LLVM IR → [Optimization] �
 
 TransISA uses traditional compiler techniques to give developers full transparency and control over the translation process. Every intermediate stage (tokens, AST, IR, optimized IR) is inspectable, making the tool suitable for legacy code migration, compiler research, and cross-ISA analysis.
 
+
+## Documentation
+
+API documentation is available at [fnhirwa.github.io/TransISA](https://fnhirwa.github.io/TransISA/).
+
 ## Features
 
 - **Full pipeline**: Lexer → Parser → AST → LLVM IR → ARM assembly in a single invocation
@@ -213,9 +218,11 @@ If you use TransISA in your research, please cite:
 
 ```bibtex
 @inproceedings{nshuti2026transisa,
-  author    = {Nshuti, Felix Hirwa},
-  title     = {{TransISA}: A Static Transpiler for Migrating Legacy x86 Assembly to {ARM} in Scientific Computing},
-  booktitle = {Proceedings of the 2026 Improving Scientific Software Conference (ISS26)},
+  author    = {Nshuti, Felix Hirwa and Mishra, Shakti},
+  title     = {{TransISA}: A Static Transpiler for Migrating Legacy x86
+               Assembly to {ARM} via {LLVM} {IR}},
+  booktitle = {Proceedings of the 2026 Improving Scientific Software
+               Conference (ISS26)},
   year      = {2026},
   address   = {Boulder, CO, USA}
 }
